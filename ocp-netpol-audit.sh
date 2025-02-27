@@ -94,6 +94,36 @@ format_output() {
     yaml)
       echo "$data" | yq -P
       ;;
+    html)
+      # Basic HTML format with a table
+      echo "<html><head><title>OpenShift NetworkPolicy Audit</title>"
+      echo "<style>body{font-family:Arial,sans-serif;margin:20px;}"
+      echo "table{border-collapse:collapse;width:100%;margin-top:20px;}"
+      echo "th{background-color:#f2f2f2;text-align:left;padding:12px;border:1px solid #ddd;}"
+      echo "td{padding:12px;border:1px solid #ddd;}"
+      echo "tr:nth-child(even){background-color:#f9f9f9;}"
+      echo "tr:hover{background-color:#f2f2f2;}"
+      echo "h1,h2{color:#333;}</style></head>"
+      echo "<body><h1>OpenShift NetworkPolicy Audit</h1>"
+      echo "<table><tr>"
+      
+      # Extract headers (assuming tab-delimited)
+      echo "$data" | head -n 1 | tr '\t' '\n' | while read -r header; do
+        echo "<th>$header</th>"
+      done
+      echo "</tr>"
+      
+      # Extract data rows
+      echo "$data" | tail -n +2 | while read -r line; do
+        echo "<tr>"
+        echo "$line" | tr '\t' '\n' | while read -r cell; do
+          echo "<td>$cell</td>"
+        done
+        echo "</tr>"
+      done
+      
+      echo "</table></body></html>"
+      ;;
     dot)
       # Return as-is, as dot format is only generated for visualization
       echo "$data"
@@ -619,8 +649,18 @@ check_namespace() {
 visualize_flows() {
   local namespace="${1:-all}"
   local format="${OUTPUT_FORMAT:-dot}"
+  local timestamp=$(date +%Y%m%d-%H%M%S)
+  local output_file="ocp-netpol-visualization-${timestamp}"
   
   echo "Generating network policy visualization..."
+  
+  # If HTML format is requested
+  if [ "$format" == "html" ]; then
+    output_file="${output_file}.html"
+    generate_flow_html "$output_file" "$namespace"
+    echo "HTML visualization generated: $output_file"
+    return
+  fi
   
   # If DOT format, create a DOT file for use with Graphviz
   if [ "$format" == "dot" ]; then
@@ -713,8 +753,453 @@ visualize_flows() {
     echo "To render the visualization, pipe the output to a file and use Graphviz:"
     echo "Example: ${SCRIPT_NAME} visualize -o dot > network-policies.dot && dot -Tpng network-policies.dot -o network-policies.png"
   else
-    echo "Visualization is only supported in DOT format. Please use '--output dot'."
+    echo "Visualization is only supported in DOT or HTML format. Please use '--output dot' or '--output html'."
   fi
+}
+
+# Function to generate an HTML visualization of network policies
+generate_flow_html() {
+  local output_file="$1"
+  local namespace="${2:-all}"
+  
+  echo "Generating HTML network policy visualization: ${output_file}"
+  
+  # Create HTML report
+  cat << EOF > "$output_file"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenShift Network Policy Visualization</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            color: #333;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            border-radius: 5px;
+        }
+        header {
+            background-color: #151c39;
+            color: white;
+            padding: 30px 20px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        h2 {
+            color: #151c39;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+            font-size: 22px;
+            font-weight: 600;
+        }
+        .cluster-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-top: 10px;
+        }
+        .cluster-info p {
+            margin: 0;
+            background-color: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 50px;
+            font-size: 14px;
+        }
+        .section-title {
+            display: flex;
+            align-items: center;
+        }
+        .section-title:before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 24px;
+            background-color: #151c39;
+            margin-right: 10px;
+            border-radius: 5px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+            background-color: #fff;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
+        }
+        th, td {
+            text-align: left;
+            padding: 15px;
+            border: 1px solid #eee;
+        }
+        th {
+            background-color: #f2f6fc;
+            color: #151c39;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #f9fbff;
+        }
+        tr:hover {
+            background-color: #f0f4fa;
+        }
+        .policy-card {
+            background-color: #fff;
+            border-radius: 5px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .policy-name {
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #151c39;
+        }
+        .namespace-label {
+            display: inline-block;
+            background-color: #e3f2fd;
+            color: #0d47a1;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .policy-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        .ingress-type {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .egress-type {
+            background-color: #fff3e0;
+            color: #e65100;
+        }
+        .rule-container {
+            border-left: 3px solid #ccc;
+            padding-left: 15px;
+            margin: 10px 0;
+        }
+        .rule-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        .rule-detail {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-bottom: 10px;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+        .instructions {
+            background-color: #f2f6fc;
+            border-left: 4px solid #151c39;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>OpenShift Network Policy Visualization</h1>
+        <div class="cluster-info">
+            <p>Generated: $(date)</p>
+            <p>Cluster: $(oc whoami --show-server)</p>
+            <p>User: $(oc whoami)</p>
+            <p>Namespace: $namespace</p>
+        </div>
+    </header>
+    
+    <h2 class="section-title">Network Policies</h2>
+    
+    <div class="instructions">
+        <p>This visualization shows the NetworkPolicies in your cluster and their relationships. Each policy is shown with its ingress and egress rules.</p>
+        <p>Legend:</p>
+        <div class="grid-container" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #e8f5e9;"></div>
+                <span>Ingress Rule</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #fff3e0;"></div>
+                <span>Egress Rule</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #e3f2fd;"></div>
+                <span>Namespace</span>
+            </div>
+        </div>
+    </div>
+    
+EOF
+  
+  # Process network policies
+  if [ "$namespace" == "all" ]; then
+    netpols=$(oc get networkpolicy --all-namespaces -o json)
+  else
+    netpols=$(oc get networkpolicy -n "$namespace" -o json)
+  fi
+  
+  # Sort policies by namespace
+  echo "<h2 class=\"section-title\">Policies by Namespace</h2>" >> "$output_file"
+  
+  local namespaces
+  if [ "$namespace" == "all" ]; then
+    namespaces=$(echo "$netpols" | jq -r '.items[].metadata.namespace' | sort | uniq)
+  else
+    namespaces="$namespace"
+  fi
+  
+  for ns in $namespaces; do
+    echo "<h3>Namespace: $ns</h3>" >> "$output_file"
+    
+    # Get policies for this namespace
+    local ns_policies=$(echo "$netpols" | jq -r --arg ns "$ns" '.items[] | select(.metadata.namespace == $ns)')
+    if [ -z "$ns_policies" ]; then
+      echo "<p>No NetworkPolicies defined in this namespace.</p>" >> "$output_file"
+      continue
+    fi
+    
+    # Process each policy
+    echo "$ns_policies" | jq -c '.' | while read -r policy; do
+      local name=$(echo "$policy" | jq -r '.metadata.name')
+      local types=$(echo "$policy" | jq -r '.spec.policyTypes[]')
+      local pod_selector=$(echo "$policy" | jq -r '.spec.podSelector.matchLabels')
+      
+      echo "<div class=\"policy-card\">" >> "$output_file"
+      echo "<div class=\"policy-name\">$name</div>" >> "$output_file"
+      echo "<div class=\"namespace-label\">$ns</div>" >> "$output_file"
+      
+      # Show policy types
+      for type in $types; do
+        if [ "$type" == "Ingress" ]; then
+          echo "<span class=\"policy-type ingress-type\">Ingress</span>" >> "$output_file"
+        elif [ "$type" == "Egress" ]; then
+          echo "<span class=\"policy-type egress-type\">Egress</span>" >> "$output_file"
+        fi
+      done
+      
+      echo "<div style=\"margin-top: 10px;\"><strong>Pod Selector:</strong> " >> "$output_file"
+      if [ "$pod_selector" == "{}" ] || [ "$pod_selector" == "null" ]; then
+        echo "All pods in namespace" >> "$output_file"
+      else
+        echo "<code>$(echo "$pod_selector" | jq -r '.')</code>" >> "$output_file"
+      fi
+      echo "</div>" >> "$output_file"
+      
+      # Process ingress rules
+      if echo "$types" | grep -q "Ingress"; then
+        echo "<div class=\"rule-container\">" >> "$output_file"
+        echo "<div class=\"rule-title\">Ingress Rules</div>" >> "$output_file"
+        
+        local ingress_rules=$(echo "$policy" | jq -r '.spec.ingress')
+        if [ "$ingress_rules" == "null" ] || [ "$ingress_rules" == "[]" ]; then
+          echo "<div class=\"rule-detail\">Block all ingress traffic</div>" >> "$output_file"
+        else
+          local rule_count=$(echo "$ingress_rules" | jq -r 'length')
+          for ((i=0; i<rule_count; i++)); do
+            echo "<div class=\"rule-detail\">" >> "$output_file"
+            
+            local from_selectors=$(echo "$ingress_rules" | jq -r ".[$i].from")
+            if [ "$from_selectors" == "null" ] || [ "$from_selectors" == "[]" ]; then
+              echo "Allow traffic from all sources" >> "$output_file"
+            else
+              echo "Allow traffic from:<br>" >> "$output_file"
+              local from_count=$(echo "$from_selectors" | jq -r 'length')
+              for ((j=0; j<from_count; j++)); do
+                local pod_selector=$(echo "$from_selectors" | jq -r ".[$j].podSelector")
+                local namespace_selector=$(echo "$from_selectors" | jq -r ".[$j].namespaceSelector")
+                local ip_block=$(echo "$from_selectors" | jq -r ".[$j].ipBlock")
+                
+                if [ "$pod_selector" != "null" ]; then
+                  echo "- Pod selector: <code>$(echo "$pod_selector" | jq -r '.matchLabels')</code><br>" >> "$output_file"
+                fi
+                if [ "$namespace_selector" != "null" ]; then
+                  echo "- Namespace selector: <code>$(echo "$namespace_selector" | jq -r '.matchLabels')</code><br>" >> "$output_file"
+                fi
+                if [ "$ip_block" != "null" ]; then
+                  echo "- IP block: <code>$(echo "$ip_block" | jq -r '.cidr')</code><br>" >> "$output_file"
+                fi
+              done
+            fi
+            
+            # Extract ports
+            local ports=$(echo "$ingress_rules" | jq -r ".[$i].ports")
+            if [ "$ports" == "null" ] || [ "$ports" == "[]" ]; then
+              echo "<br>Ports: All ports" >> "$output_file"
+            else
+              echo "<br>Ports:<br>" >> "$output_file"
+              local ports_count=$(echo "$ports" | jq -r 'length')
+              for ((k=0; k<ports_count; k++)); do
+                local port=$(echo "$ports" | jq -r ".[$k].port")
+                local protocol=$(echo "$ports" | jq -r ".[$k].protocol")
+                if [ "$protocol" == "null" ]; then
+                  protocol="TCP"
+                fi
+                echo "- $protocol/$port<br>" >> "$output_file"
+              done
+            fi
+            
+            echo "</div>" >> "$output_file"
+          done
+        fi
+        
+        echo "</div>" >> "$output_file"
+      fi
+      
+      # Process egress rules
+      if echo "$types" | grep -q "Egress"; then
+        echo "<div class=\"rule-container\">" >> "$output_file"
+        echo "<div class=\"rule-title\">Egress Rules</div>" >> "$output_file"
+        
+        local egress_rules=$(echo "$policy" | jq -r '.spec.egress')
+        if [ "$egress_rules" == "null" ] || [ "$egress_rules" == "[]" ]; then
+          echo "<div class=\"rule-detail\">Block all egress traffic</div>" >> "$output_file"
+        else
+          local rule_count=$(echo "$egress_rules" | jq -r 'length')
+          for ((i=0; i<rule_count; i++)); do
+            echo "<div class=\"rule-detail\">" >> "$output_file"
+            
+            local to_selectors=$(echo "$egress_rules" | jq -r ".[$i].to")
+            if [ "$to_selectors" == "null" ] || [ "$to_selectors" == "[]" ]; then
+              echo "Allow traffic to all destinations" >> "$output_file"
+            else
+              echo "Allow traffic to:<br>" >> "$output_file"
+              local to_count=$(echo "$to_selectors" | jq -r 'length')
+              for ((j=0; j<to_count; j++)); do
+                local pod_selector=$(echo "$to_selectors" | jq -r ".[$j].podSelector")
+                local namespace_selector=$(echo "$to_selectors" | jq -r ".[$j].namespaceSelector")
+                local ip_block=$(echo "$to_selectors" | jq -r ".[$j].ipBlock")
+                
+                if [ "$pod_selector" != "null" ]; then
+                  echo "- Pod selector: <code>$(echo "$pod_selector" | jq -r '.matchLabels')</code><br>" >> "$output_file"
+                fi
+                if [ "$namespace_selector" != "null" ]; then
+                  echo "- Namespace selector: <code>$(echo "$namespace_selector" | jq -r '.matchLabels')</code><br>" >> "$output_file"
+                fi
+                if [ "$ip_block" != "null" ]; then
+                  local cidr=$(echo "$ip_block" | jq -r '.cidr')
+                  local except=$(echo "$ip_block" | jq -r '.except[]')
+                  if [ "$except" == "null" ]; then
+                    echo "- IP block: <code>$cidr</code><br>" >> "$output_file"
+                  else
+                    echo "- IP block: <code>$cidr</code> (except: <code>$except</code>)<br>" >> "$output_file"
+                  fi
+                fi
+              done
+            fi
+            
+            # Extract ports
+            local ports=$(echo "$egress_rules" | jq -r ".[$i].ports")
+            if [ "$ports" == "null" ] || [ "$ports" == "[]" ]; then
+              echo "<br>Ports: All ports" >> "$output_file"
+            else
+              echo "<br>Ports:<br>" >> "$output_file"
+              local ports_count=$(echo "$ports" | jq -r 'length')
+              for ((k=0; k<ports_count; k++)); do
+                local port=$(echo "$ports" | jq -r ".[$k].port")
+                local protocol=$(echo "$ports" | jq -r ".[$k].protocol")
+                if [ "$protocol" == "null" ]; then
+                  protocol="TCP"
+                fi
+                echo "- $protocol/$port<br>" >> "$output_file"
+              done
+            fi
+            
+            echo "</div>" >> "$output_file"
+          done
+        fi
+        
+        echo "</div>" >> "$output_file"
+      fi
+      
+      echo "</div>" >> "$output_file"
+    done
+  done
+  
+  # Summary Section
+  echo "<h2 class=\"section-title\">Network Policy Summary</h2>" >> "$output_file"
+  
+  # Calculate stats
+  local total_policies=$(echo "$netpols" | jq -r '.items | length')
+  local ingress_policies=$(echo "$netpols" | jq -r '.items[] | select(.spec.policyTypes[] | contains("Ingress")) | .metadata.name' | wc -l)
+  local egress_policies=$(echo "$netpols" | jq -r '.items[] | select(.spec.policyTypes[] | contains("Egress")) | .metadata.name' | wc -l)
+  local default_deny_policies=$(echo "$netpols" | jq -r '.items[] | select(.spec.podSelector.matchLabels == null or .spec.podSelector.matchLabels == {}) | .metadata.name' | wc -l)
+  
+  echo "<div class=\"grid-container\">" >> "$output_file"
+  echo "<div style=\"background-color: #fff; border-radius: 5px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);\">" >> "$output_file"
+  echo "<h3>Policy Statistics</h3>" >> "$output_file"
+  echo "<p>Total Policies: <strong>$total_policies</strong></p>" >> "$output_file"
+  echo "<p>Ingress Policies: <strong>$ingress_policies</strong></p>" >> "$output_file"
+  echo "<p>Egress Policies: <strong>$egress_policies</strong></p>" >> "$output_file"
+  echo "<p>Default-Deny Policies: <strong>$default_deny_policies</strong></p>" >> "$output_file"
+  echo "</div>" >> "$output_file"
+  
+  echo "<div style=\"background-color: #fff; border-radius: 5px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);\">" >> "$output_file"
+  echo "<h3>Understanding Network Policies</h3>" >> "$output_file"
+  echo "<ul>" >> "$output_file"
+  echo "<li>NetworkPolicies are namespace-scoped resources that control traffic to and from pods</li>" >> "$output_file"
+  echo "<li>By default, all pods in a namespace can communicate with each other</li>" >> "$output_file"
+  echo "<li>Ingress rules control incoming traffic to pods</li>" >> "$output_file"
+  echo "<li>Egress rules control outgoing traffic from pods</li>" >> "$output_file"
+  echo "<li>Default-deny policies block all traffic unless explicitly allowed</li>" >> "$output_file"
+  echo "</ul>" >> "$output_file"
+  echo "</div>" >> "$output_file"
+  echo "</div>" >> "$output_file"
+  
+  # Footer
+  echo "<div style=\"margin-top: 40px; text-align: center; color: #777; font-size: 0.9em; padding: 20px 0; border-top: 1px solid #eee;\">" >> "$output_file"
+  echo "<p>Generated with OpenShift Network Policy Audit Tool v${VERSION}</p>" >> "$output_file"
+  echo "</div>" >> "$output_file"
+  
+  echo "</div></body></html>" >> "$output_file"
+  
+  echo "Report generated: ${output_file}"
 }
 
 # Function to generate flow matrix
@@ -1277,6 +1762,17 @@ simulate_traffic() {
 
 # Function to perform a comprehensive audit
 audit_networkpolicies() {
+  local timestamp=$(date +%Y%m%d-%H%M%S)
+  local report_file="ocp-netpol-audit-report-${timestamp}"
+  
+  # Check if HTML output is requested
+  if [ "$OUTPUT_FORMAT" == "html" ]; then
+    report_file="${report_file}.html"
+    generate_html_report "$report_file"
+    echo "HTML audit report generated: $report_file"
+    return
+  fi
+
   echo "Performing comprehensive NetworkPolicy audit..."
   
   # 1. Check policy coverage
@@ -1373,6 +1869,608 @@ audit_networkpolicies() {
   
   echo ""
   echo "Audit completed successfully."
+}
+
+# Function to generate a comprehensive HTML report for network policies
+generate_html_report() {
+  local report_file="$1"
+  echo "Generating comprehensive HTML NetworkPolicy audit report: ${report_file}"
+    
+  # Create HTML report
+  cat << EOF > "$report_file"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenShift Network Policy Audit Report</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            color: #333;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            border-radius: 5px;
+        }
+        header {
+            background-color: #151c39;
+            color: white;
+            padding: 30px 20px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+        header::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 30%;
+            background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.1) 100%);
+            z-index: 1;
+        }
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        h2 {
+            color: #151c39;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+            font-size: 22px;
+            font-weight: 600;
+        }
+        h3 {
+            color: #333;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        h4 {
+            color: #4c5b76;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+            background-color: #fff;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
+        }
+        th, td {
+            text-align: left;
+            padding: 15px;
+            border: 1px solid #eee;
+        }
+        th {
+            background-color: #f2f6fc;
+            color: #151c39;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #f9fbff;
+        }
+        tr:hover {
+            background-color: #f0f4fa;
+        }
+        .risk-high {
+            color: #e53935;
+            font-weight: bold;
+        }
+        .risk-medium {
+            color: #f57c00;
+            font-weight: bold;
+        }
+        .risk-low {
+            color: #43a047;
+        }
+        .timestamp {
+            color: #767676;
+            font-style: italic;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .true {
+            color: #e53935;
+            font-weight: bold;
+        }
+        .false {
+            color: #43a047;
+        }
+        ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        ul li {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        ul li:before {
+            content: "•";
+            color: #151c39;
+            font-weight: bold;
+            display: inline-block;
+            width: 20px;
+        }
+        .summary-box {
+            background-color: #f2f6fc;
+            border-left: 4px solid #151c39;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .cluster-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-top: 10px;
+        }
+        .cluster-info p {
+            margin: 0;
+            background-color: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 50px;
+            font-size: 14px;
+        }
+        .section-title {
+            display: flex;
+            align-items: center;
+        }
+        .section-title:before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 24px;
+            background-color: #151c39;
+            margin-right: 10px;
+            border-radius: 5px;
+        }
+        .status-box {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .status-good {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .status-warning {
+            background-color: #fff8e1;
+            color: #f57f17;
+        }
+        .status-danger {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .info-card {
+            background-color: #fff;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>OpenShift Network Policy Audit Report</h1>
+        <div class="cluster-info">
+            <p>Generated: $(date)</p>
+            <p>Cluster: $(oc whoami --show-server)</p>
+            <p>User: $(oc whoami)</p>
+        </div>
+    </header>
+    
+    <h2 class="section-title">Summary</h2>
+    <div class="summary-box">
+EOF
+    
+  # Count total namespaces and namespaces with policies
+  local total_ns=$(oc get namespaces --no-headers | wc -l)
+  local ns_with_policies=$(oc get networkpolicy --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort | uniq | wc -l)
+  local coverage_percentage=$((ns_with_policies * 100 / total_ns))
+  local total_policies=$(oc get networkpolicy --all-namespaces --no-headers 2>/dev/null | wc -l)
+  
+  # Count default-deny policies
+  local default_deny_ns=$(oc get networkpolicy --all-namespaces -o json | jq -r '.items[] | select(.spec.podSelector.matchLabels == null or .spec.podSelector.matchLabels == {}) | select(.spec.policyTypes[] | contains("Ingress") or contains("Egress")) | .metadata.namespace' | sort | uniq | wc -l)
+  
+  echo "<div class=\"grid-container\">" >> "$report_file"
+  echo "<div class=\"info-card\"><h3>Network Policy Statistics</h3>" >> "$report_file"
+  echo "<p>Total Namespaces: <strong>$total_ns</strong></p>" >> "$report_file"
+  echo "<p>Namespaces with Policies: <strong>$ns_with_policies</strong></p>" >> "$report_file"
+  echo "<p>Total Network Policies: <strong>$total_policies</strong></p>" >> "$report_file"
+  echo "<p>Default-Deny Namespaces: <strong>$default_deny_ns</strong></p>" >> "$report_file"
+  echo "</div>" >> "$report_file"
+  
+  # Add coverage status
+  echo "<div class=\"info-card\"><h3>Coverage Status</h3>" >> "$report_file"
+  if [ "$coverage_percentage" -ge 80 ]; then
+    echo "<p><span class=\"status-box status-good\">Good</span> $coverage_percentage% of namespaces have network policies</p>" >> "$report_file"
+  elif [ "$coverage_percentage" -ge 50 ]; then  
+    echo "<p><span class=\"status-box status-warning\">Warning</span> $coverage_percentage% of namespaces have network policies</p>" >> "$report_file"
+  else
+    echo "<p><span class=\"status-box status-danger\">Critical</span> Only $coverage_percentage% of namespaces have network policies</p>" >> "$report_file"
+  fi
+  
+  # Check for ingress controller protection
+  local ingress_protected=0
+  if oc get networkpolicy -n openshift-ingress --no-headers 2>/dev/null | wc -l | grep -q "[1-9]"; then
+    ingress_protected=1
+    echo "<p><span class=\"status-box status-good\">Protected</span> Ingress controllers have network policies</p>" >> "$report_file"
+  else
+    echo "<p><span class=\"status-box status-danger\">Exposed</span> Ingress controllers have no network policies</p>" >> "$report_file"
+  fi
+  
+  # Check for core namespaces protection
+  local core_protected=0
+  local core_total=0
+  for ns in kube-system openshift-apiserver openshift-etcd openshift-kube-apiserver; do
+    if oc get namespace "$ns" &>/dev/null; then
+      core_total=$((core_total+1))
+      if oc get networkpolicy -n "$ns" --no-headers 2>/dev/null | wc -l | grep -q "[1-9]"; then
+        core_protected=$((core_protected+1))
+      fi
+    fi
+  done
+  
+  if [ "$core_total" -gt 0 ]; then
+    if [ "$core_protected" -eq "$core_total" ]; then
+      echo "<p><span class=\"status-box status-good\">Protected</span> Core components have network policies</p>" >> "$report_file"
+    else
+      echo "<p><span class=\"status-box status-danger\">Exposed</span> Some core components lack network policies</p>" >> "$report_file"
+    fi
+  fi
+  
+  echo "</div></div></div>" >> "$report_file"
+  
+  # Network Policy Coverage Section
+  echo "<h2 class=\"section-title\">Network Policy Coverage by Namespace</h2>" >> "$report_file"
+  echo "<table>" >> "$report_file"
+  echo "<tr><th>Namespace</th><th>Policies</th><th>Default-Deny</th><th>Pod Coverage</th><th>Risk Level</th></tr>" >> "$report_file"
+  
+  for ns in $(get_all_namespaces); do
+    # Count policies
+    local policy_count=$(oc get networkpolicy -n "$ns" --no-headers 2>/dev/null | wc -l)
+    
+    # Check if there's a default deny policy
+    local default_deny=0
+    if oc get networkpolicy -n "$ns" -o json 2>/dev/null | jq -r '.items[] | select(.spec.podSelector.matchLabels == null)' | grep -q "Ingress"; then
+      default_deny=1
+    fi
+    
+    # Get pod count
+    local pod_count=$(oc get pods -n "$ns" --no-headers 2>/dev/null | wc -l)
+    
+    # Calculate pod coverage
+    local coverage="0%"
+    local risk="HIGH"
+    local risk_class="risk-high"
+    
+    if [ "$pod_count" -gt 0 ]; then
+      if [ "$policy_count" -gt 0 ]; then
+        # Get pods targeted by policies
+        local targeted_labels=$(oc get networkpolicy -n "$ns" -o json 2>/dev/null | jq -r '.items[].spec.podSelector.matchLabels | keys[]' 2>/dev/null | sort | uniq)
+        local total_targeted=0
+        
+        # Count pods targeted by any policy
+        for label in $targeted_labels; do
+          local label_value=$(oc get networkpolicy -n "$ns" -o json 2>/dev/null | jq -r '.items[].spec.podSelector.matchLabels."'"$label"'"' | head -1)
+          if [ -n "$label_value" ]; then
+            local pods_with_label=$(oc get pods -n "$ns" -l "$label=$label_value" --no-headers 2>/dev/null | wc -l)
+            total_targeted=$((total_targeted + pods_with_label))
+          fi
+        done
+        
+        # Check for default deny that would cover all pods
+        if [ "$default_deny" -eq 1 ]; then
+          total_targeted=$pod_count
+        fi
+        
+        # Calculate coverage percentage
+        local percentage=$((total_targeted * 100 / pod_count))
+        coverage="${percentage}%"
+        
+        # Determine risk level
+        if [ "$percentage" -eq 100 ]; then
+          if [ "$default_deny" -eq 1 ]; then
+            risk="LOW"
+            risk_class="risk-low"
+          else
+            risk="MEDIUM"
+            risk_class="risk-medium"
+          fi
+        elif [ "$percentage" -gt 50 ]; then
+          risk="MEDIUM"
+          risk_class="risk-medium"
+        else
+          risk="HIGH"
+          risk_class="risk-high"
+        fi
+      fi
+    elif [ "$pod_count" -eq 0 ]; then
+      coverage="N/A"
+      risk="N/A"
+      risk_class=""
+    fi
+    
+    # Display default deny as Yes/No
+    local default_deny_text="No"
+    if [ "$default_deny" -eq 1 ]; then
+      default_deny_text="Yes"
+    fi
+    
+    echo "<tr><td>$ns</td><td>$policy_count</td><td>$default_deny_text</td><td>$coverage</td><td class=\"$risk_class\">$risk</td></tr>" >> "$report_file"
+  done
+  
+  echo "</table>" >> "$report_file"
+  
+  # Gaps section - namespaces without NetworkPolicies
+  echo "<h2 class=\"section-title\">Namespaces Without Network Policies</h2>" >> "$report_file"
+  echo "<p>The following namespaces do not have any network policies defined and may be at risk:</p>" >> "$report_file"
+  echo "<table>" >> "$report_file"
+  echo "<tr><th>Namespace</th><th>Pod Count</th><th>Risk Level</th></tr>" >> "$report_file"
+  
+  local gaps_found=0
+  for ns in $(oc get namespaces -o jsonpath='{.items[*].metadata.name}'); do
+    # Count policies
+    local policy_count=$(oc get networkpolicy -n "$ns" --no-headers 2>/dev/null | wc -l)
+    
+    # If no policies, check pod count to assess risk
+    if [ "$policy_count" -eq 0 ]; then
+      gaps_found=1
+      local pod_count=$(oc get pods -n "$ns" --no-headers 2>/dev/null | wc -l)
+      local risk="LOW"
+      local risk_class="risk-low"
+      
+      # Determine risk based on namespace and pod count
+      if [[ "$ns" == "default" || "$ns" == "kube-"* || "$ns" == "openshift"* ]]; then
+        if [ "$pod_count" -gt 0 ]; then
+          risk="HIGH"
+          risk_class="risk-high"
+        fi
+      elif [ "$pod_count" -gt 5 ]; then
+        risk="HIGH"
+        risk_class="risk-high"
+      elif [ "$pod_count" -gt 0 ]; then
+        risk="MEDIUM"
+        risk_class="risk-medium"
+      fi
+      
+      echo "<tr><td>$ns</td><td>$pod_count</td><td class=\"$risk_class\">$risk</td></tr>" >> "$report_file"
+    fi
+  done
+  
+  if [ "$gaps_found" -eq 0 ]; then
+    echo "<tr><td colspan=\"3\">No gaps found. All namespaces have at least one network policy.</td></tr>" >> "$report_file"
+  fi
+  
+  echo "</table>" >> "$report_file"
+  
+  # Overly Permissive Policies
+  echo "<h2 class=\"section-title\">Overly Permissive Network Policies</h2>" >> "$report_file"
+  echo "<p>The following network policies may be too permissive and should be reviewed:</p>" >> "$report_file"
+  echo "<table>" >> "$report_file"
+  echo "<tr><th>Namespace</th><th>Policy</th><th>Issue</th></tr>" >> "$report_file"
+  
+  local permissive_found=0
+  for ns in $(oc get namespaces -o jsonpath='{.items[*].metadata.name}'); do
+    for policy in $(oc get networkpolicy -n "$ns" --no-headers 2>/dev/null | awk '{print $1}'); do
+      # Get policy details
+      local policy_json=$(oc get networkpolicy "$policy" -n "$ns" -o json)
+      
+      # Check for empty podSelector
+      local pod_selector=$(echo "$policy_json" | jq -r '.spec.podSelector.matchLabels')
+      local empty_selector=0
+      if [ "$pod_selector" == "{}" ] || [ "$pod_selector" == "null" ]; then
+        empty_selector=1
+      fi
+      
+      # Check for ingress from any source
+      if echo "$policy_json" | jq -r '.spec.ingress[]?.from' | grep -q "null"; then
+        permissive_found=1
+        echo "<tr><td>$ns</td><td>$policy</td><td>Allows ingress from all sources</td></tr>" >> "$report_file"
+      fi
+      
+      # Check for egress to any destination
+      if echo "$policy_json" | jq -r '.spec.egress[]?.to' | grep -q "null"; then
+        permissive_found=1
+        echo "<tr><td>$ns</td><td>$policy</td><td>Allows egress to all destinations</td></tr>" >> "$report_file"
+      fi
+      
+      # Non-default-deny policy with empty selector
+      if [ "$empty_selector" -eq 1 ]; then
+        local has_ingress=$(echo "$policy_json" | jq -r '.spec.ingress | length')
+        local has_egress=$(echo "$policy_json" | jq -r '.spec.egress | length')
+        
+        if [ "$has_ingress" -gt 0 ] || [ "$has_egress" -gt 0 ]; then
+          permissive_found=1
+          echo "<tr><td>$ns</td><td>$policy</td><td>Empty pod selector with permissive rules</td></tr>" >> "$report_file"
+        fi
+      fi
+    done
+  done
+  
+  if [ "$permissive_found" -eq 0 ]; then
+    echo "<tr><td colspan=\"3\">No overly permissive policies found.</td></tr>" >> "$report_file"
+  fi
+  
+  echo "</table>" >> "$report_file"
+  
+  # Security Recommendations
+  echo "<h2 class=\"section-title\">Security Recommendations</h2>" >> "$report_file"
+  
+  echo "<div class=\"grid-container\">" >> "$report_file"
+  echo "<div class=\"info-card\">" >> "$report_file"
+  echo "<h3>High Priority</h3>" >> "$report_file"
+  echo "<ul>" >> "$report_file"
+
+  # Recommend default-deny if coverage is low
+  if [ "$coverage_percentage" -lt 70 ]; then
+    echo "<li>Implement default-deny NetworkPolicies in all production namespaces to establish a baseline security posture</li>" >> "$report_file"
+  fi
+  
+  # Check for ingress controller protection
+  if [ "$ingress_protected" -eq 0 ]; then
+    echo "<li>Implement NetworkPolicies for the ingress controller namespace to protect your ingress controllers</li>" >> "$report_file"
+  fi
+  
+  # Check for core namespaces
+  if [ "$core_total" -gt 0 ] && [ "$core_protected" -lt "$core_total" ]; then
+    echo "<li>Add NetworkPolicies to protect core OpenShift components (etcd, API server, etc.)</li>" >> "$report_file"
+  fi
+  
+  # Check for Prometheus access
+  local prom_policies=$(oc get networkpolicy --all-namespaces -o json | jq -r '.items[] | select(.spec.ingress[]?.from[]?.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "openshift-monitoring") | .metadata.namespace' | sort | uniq | wc -l)
+  
+  if [ "$prom_policies" -lt "$ns_with_policies" ]; then
+    echo "<li>Ensure Prometheus has access to all namespaces for monitoring by adding appropriate ingress rules</li>" >> "$report_file"
+  fi
+
+  # Always add these recommendations
+  echo "<li>Review and restrict overly permissive policies allowing traffic from all sources</li>" >> "$report_file"
+  echo "<li>Add explicit NetworkPolicies for namespaces with running pods</li>" >> "$report_file"
+  
+  echo "</ul></div>" >> "$report_file"
+  
+  # Best Practices
+  echo "<div class=\"info-card\">" >> "$report_file"
+  echo "<h3>Best Practices</h3>" >> "$report_file"
+  echo "<ul>" >> "$report_file"
+  echo "<li>Start with a default-deny policy, then explicitly whitelist required traffic</li>" >> "$report_file"
+  echo "<li>Use specific podSelectors rather than applying policies to all pods in a namespace</li>" >> "$report_file"
+  echo "<li>Document the purpose of each NetworkPolicy to aid in maintenance</li>" >> "$report_file"
+  echo "<li>Use labels consistently across namespaces to simplify policy creation</li>" >> "$report_file"
+  echo "<li>Regularly audit NetworkPolicies to ensure they are still required and properly configured</li>" >> "$report_file"
+  echo "</ul></div>" >> "$report_file"
+  
+  # General Information
+  echo "<div class=\"info-card\">" >> "$report_file"
+  echo "<h3>Network Policy Information</h3>" >> "$report_file"
+  echo "<ul>" >> "$report_file"
+  echo "<li>NetworkPolicies are namespace-scoped resources that control traffic to and from pods</li>" >> "$report_file"
+  echo "<li>By default, all pods in a namespace can communicate with each other</li>" >> "$report_file"
+  echo "<li>Default-deny policies block all traffic unless explicitly allowed</li>" >> "$report_file"
+  echo "<li>Ingress rules control incoming traffic to pods</li>" >> "$report_file"
+  echo "<li>Egress rules control outgoing traffic from pods</li>" >> "$report_file"
+  echo "</ul></div>" >> "$report_file"
+  
+  echo "</div>" >> "$report_file"
+  
+  # Sample Network Policies Section
+  echo "<h2 class=\"section-title\">Sample Network Policies</h2>" >> "$report_file"
+  
+  echo "<h3>Default-Deny Ingress</h3>" >> "$report_file"
+  echo "<pre style=\"background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto;\">" >> "$report_file"
+  cat << 'ENDPOLICY' >> "$report_file"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: your-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+ENDPOLICY
+  echo "</pre>" >> "$report_file"
+  
+  echo "<h3>Default-Deny Egress</h3>" >> "$report_file"
+  echo "<pre style=\"background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto;\">" >> "$report_file"
+  cat << 'ENDPOLICY' >> "$report_file"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: your-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+ENDPOLICY
+  echo "</pre>" >> "$report_file"
+  
+  echo "<h3>Allow Specific Pod Communication</h3>" >> "$report_file"
+  echo "<pre style=\"background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto;\">" >> "$report_file"
+  cat << 'ENDPOLICY' >> "$report_file"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: your-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+ENDPOLICY
+  echo "</pre>" >> "$report_file"
+  
+  echo "<h3>Allow Prometheus Monitoring</h3>" >> "$report_file"
+  echo "<pre style=\"background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto;\">" >> "$report_file"
+  cat << 'ENDPOLICY' >> "$report_file"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus
+  namespace: your-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+ENDPOLICY
+  echo "</pre>" >> "$report_file"
+  
+  # Footer
+  echo "<div style=\"margin-top: 40px; text-align: center; color: #777; font-size: 0.9em; padding: 20px 0; border-top: 1px solid #eee;\">" >> "$report_file"
+  echo "<p>Generated with OpenShift Network Policy Audit Tool v${VERSION}</p>" >> "$report_file"
+  echo "</div>" >> "$report_file"
+  
+  echo "</div></body></html>" >> "$report_file"
+  
+  echo "Report generated: ${report_file}"
 }
 
 # Function to create pod-to-pod communication matrix
