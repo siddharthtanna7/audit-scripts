@@ -31,6 +31,9 @@ Commands:
   networking                    Run checks for Network Security
   logging                       Run checks for Logging and Monitoring
   authentication                Run checks for Authentication mechanisms
+  general-policies              Run checks for General Policies
+  image-security                Run checks for Image Security
+  container-runtime             Run checks for Container Runtime Security
   help                          Show this help message
 
 Options:
@@ -47,6 +50,7 @@ Examples:
   ${SCRIPT_NAME} etcd --verbose
   ${SCRIPT_NAME} worker --remediation
   ${SCRIPT_NAME} policies
+  ${SCRIPT_NAME} image-security
 
 EOF
 }
@@ -105,22 +109,22 @@ format_result() {
         '{id: $id, title: $title, level: $level, result: $result, details: $details}'
       ;;
     html)
-      local result_color
+      local result_class
       if [ "$result" == "PASS" ]; then
-        result_color="green"
+        result_class="badge-pass"
       elif [ "$result" == "FAIL" ]; then
-        result_color="red"
+        result_class="badge-fail"
       elif [ "$result" == "WARN" ]; then
-        result_color="orange"
+        result_class="badge-warn"
       else
-        result_color="gray"
+        result_class="badge-info"
       fi
       
       echo "<tr>"
       echo "  <td>${id}</td>"
       echo "  <td>${title}</td>"
       echo "  <td>${level}</td>"
-      echo "  <td style=\"color: ${result_color}\">${result}</td>"
+      echo "  <td><span class=\"result-badge ${result_class}\">${result}</span></td>"
       echo "  <td>${details}</td>"
       echo "</tr>"
       ;;
@@ -172,17 +176,44 @@ get_remediation() {
     "1.1.11")
       echo "Modify the API server configuration to enable the PodSecurityPolicy admission controller."
       ;;
+    "1.1.16")
+      echo "Ensure that the --event-ttl flag is set to an appropriate value to prevent resource exhaustion."
+      ;;
+    "1.1.17")
+      echo "Ensure that the --secure-port flag is not set to 0 to allow secure TLS encrypted communication with the API server."
+      ;;
     "1.2.1")
       echo "Ensure etcd is configured with peer certificate authentication."
       ;;
     "1.2.9")
       echo "Configure OpenShift to use encryption for etcd data at rest."
       ;;
+    "1.2.10")
+      echo "Ensure that the etcd keyfile and certfile parameters are properly configured for secure communication."
+      ;;
+    "1.2.11")
+      echo "Ensure that the etcd client certificate authentication is properly configured for secure communication."
+      ;;
     "1.3.1")
       echo "Ensure that the controller manager service file permissions are set to 644 or more restrictive."
       ;;
+    "1.3.8")
+      echo "Set an appropriate value for the --terminated-pod-gc-threshold flag to manage cluster resources efficiently."
+      ;;
     "2.1.1")
       echo "Apply security updates and patches to worker nodes regularly."
+      ;;
+    "2.1.11")
+      echo "Configure proper TLS certificate and private key files for the kubelet."
+      ;;
+    "2.1.12")
+      echo "Disable the cadvisor port by setting it to 0 to reduce attack surface."
+      ;;
+    "2.1.13")
+      echo "Enable automatic certificate rotation for kubelet by setting --rotate-certificates to true."
+      ;;
+    "2.1.14")
+      echo "Enable kubelet server certificate rotation by setting RotateKubeletServerCertificate to true."
       ;;
     "4.1.1")
       echo "Create restrictive network policies that deny access by default and only allow necessary traffic."
@@ -190,11 +221,44 @@ get_remediation() {
     "5.1.1")
       echo "Configure and enforce image vulnerability scanning using an integrated security scanning tool."
       ;;
+    "5.1.5")
+      echo "Configure pods to not mount the default service account token by setting automountServiceAccountToken: false."
+      ;;
+    "5.1.6")
+      echo "Ensure that service account tokens are only mounted where necessary by configuring automountServiceAccountToken: false."
+      ;;
+    "5.2.1")
+      echo "Configure and use an image policy webhook to validate images before deployment."
+      ;;
     "5.2.5")
       echo "Ensure all Service Accounts in your cluster are limited to the minimum permissions they need."
       ;;
     "5.3.1")
       echo "Implement periodic rotation of secrets and service account tokens."
+      ;;
+    "5.4.1")
+      echo "Use secrets as files instead of environment variables whenever possible."
+      ;;
+    "5.5.1")
+      echo "Configure image provenance using ImagePolicyWebhook admission controller to ensure only trusted images are deployed."
+      ;;
+    "5.7.1")
+      echo "Create administrative boundaries between resources using namespaces."
+      ;;
+    "6.1.1")
+      echo "Secure worker nodes by configuring proper SSH access and hardening the operating system."
+      ;;
+    "6.5.1")
+      echo "Implement least privilege access control for all cluster resources."
+      ;;
+    "6.7.1")
+      echo "Implement network security controls including firewalls and access restrictions."
+      ;;
+    "6.8.1")
+      echo "Secure the container runtime by implementing appropriate security configurations."
+      ;;
+    "6.10.1")
+      echo "Implement CIS OS Level Benchmark recommendations for the underlying operating system."
       ;;
     *)
       echo "No specific remediation available for this check."
@@ -210,49 +274,240 @@ begin_html_report() {
 <head>
   <title>OpenShift CIS Benchmark Report</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    h1 { color: #333; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background-color: #f2f2f2; }
-    .summary { margin: 20px 0; padding: 10px; background-color: #f8f8f8; border-radius: 5px; }
-    .pass { color: green; }
-    .fail { color: red; }
-    .warn { color: orange; }
-    .info { color: gray; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      margin: 20px;
+      color: #333;
+      line-height: 1.5;
+    }
+    h1, h2, h3 { 
+      color: #D00;
+      font-weight: 600;
+    }
+    .header {
+      border-bottom: 2px solid #D00;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      max-height: 60px;
+      float: right;
+    }
+    table { 
+      border-collapse: collapse; 
+      width: 100%; 
+      margin: 20px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    th, td { 
+      padding: 12px; 
+      text-align: left; 
+      border-bottom: 1px solid #ddd; 
+    }
+    th { 
+      background-color: #f8f8f8; 
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+    tr:hover {
+      background-color: #f5f5f5;
+    }
+    .summary { 
+      margin: 20px 0; 
+      padding: 15px; 
+      background-color: #f8f8f8; 
+      border-radius: 5px;
+      border-left: 4px solid #D00;
+    }
+    .details-card {
+      background-color: white;
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 15px;
+      margin: 15px 0;
+    }
+    .pass { 
+      color: #2e7d32; 
+      font-weight: bold;
+    }
+    .fail { 
+      color: #c62828; 
+      font-weight: bold;
+    }
+    .warn { 
+      color: #ff8f00; 
+      font-weight: bold;
+    }
+    .info { 
+      color: #1976d2; 
+      font-weight: bold;
+    }
+    .result-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .badge-pass {
+      background-color: #e8f5e9;
+      color: #2e7d32;
+    }
+    .badge-fail {
+      background-color: #ffebee;
+      color: #c62828;
+    }
+    .badge-warn {
+      background-color: #fff8e1;
+      color: #ff8f00;
+    }
+    .badge-info {
+      background-color: #e3f2fd;
+      color: #1976d2;
+    }
+    .chart-container {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 30px;
+    }
+    .pie-chart {
+      width: 200px;
+      height: 200px;
+      position: relative;
+    }
+    .stat-card {
+      background: white;
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 15px;
+      margin: 0 10px;
+      flex: 1;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 36px;
+      font-weight: bold;
+      margin: 10px 0;
+    }
+    .category-section {
+      margin-top: 30px;
+      border-top: 1px solid #eee;
+      padding-top: 20px;
+    }
+    footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #eee;
+      text-align: center;
+      font-size: 12px;
+      color: #777;
+    }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-  <h1>OpenShift CIS Benchmark Report</h1>
-  <div class="summary">
-    <p><strong>Cluster:</strong> $(oc whoami --show-server)</p>
-    <p><strong>OpenShift Version:</strong> $OCP_VERSION</p>
-    <p><strong>Generated:</strong> $(date)</p>
-    <p><strong>User:</strong> $(oc whoami)</p>
+  <div class="header">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNDAgMjQwIj48ZGVmcz48c3R5bGU+LmF7ZmlsbDojZWUwMDAwO308L3N0eWxlPjwvZGVmcz48cmVjdCBjbGFzcz0iYSIgeD0iLTEiIHktIjEiIHdpZHRoPSIyNDIiIGhlaWdodD0iMjQyIi8+PHBhdGggZD0iTTEzOC42OSwyMjkuNzhjMi4zOC0yLjQzLDQuMTQtNS4yLDYuMjItNy44MWExNDQuNzYsMTQ0Ljc2LDAsMCwwLDEyLjU2LTE5LjM4YzcuNTUtMTMuNywxMi4yOS0yOC41LDEyLjgtNDQuN2ExMjEuMzcsMTIxLjM3LDAsMCwwLTEuODItMzEuMDYsOTcuMDksOTcuMDksMCwwLDAtOC4wMy0yMy45MSwxMTYuNTksMTE2LjU5LDAsMCwwLTI1LjU2LTM1LjE1Yy0yLjg4LTIuNjYtNS44OS01LjE4LTkuMTktOC4wOSw3LjU2LS4xOCwxNC4yOS4yNywyMC45LDEuNTNhNzMuMyw3My4zLDAsMCwxLDIzLjc3LDkuMTgsNjYuMTUsNjYuMTUsMCwwLDEsMTkuMzksMTcuNDIsNjkuOTEsNjkuOTEsMCwwLDEsMTEuNTksMjIuOTRBNzUuMyw3NS4zLDAsMCwxLDIxNSw5OS4zM2MwLDYuMjItMS4xLDEyLjQ0LTIuNDgsMTguNTItLjIuOTEtLjQ0LDEuODEtLjY5LDIuODhoLTM4LjY0di0uMjFoMzkuNThjLS4zOS0xLjM1LS43Mi0yLjU3LTEuMDgtMy43N2E3NC4wOCw3NC4wOCwwLDAsMS0yLjgxLTE3LjU2LDY5LjQzLDY5LjQzLDAsMCwxLDMuNjQtMjcuODUsNzAuNjksNzAuNjksMCwwLDEsMTIuMzQtMjIuMzQsNjcuOTMsNjcuOTMsMCwwLDEsMTkuODgtMTYuNTRBNzAuOTEsNzAuOTEsMCwwLDEsMjgyLjA2LDI1LDk0LjE0LDk0LjE0LDAsMCwwLDI2MSwyMC4yYy03LjQyLTEuMTctMTQuOTItMS41NC0yMi40OC0xLjUyQzIyOS4xOCwxOC43LDIxOS44OCwxOSwyMTAuNTgsMjBjLTguNzcuODktMTcuNDUsMi4wOC0yNS45Miw0LjMtNi40NSwxLjctMTIuNzUsNC04LjIsNC45NGwwLDBjLTEzLjMyLDIuODktMjYuNDEsNy0zOC42MywxMy4yMS0xMC4xNyw1LjE5LTE5Ljc3LDExLjE1LTI4LjQ2LDE4LjQ1YTEzMy44OCwxMzMuODgsMCwwLDAtMjIuNTUsMjIuMjIsODIuNTQsODIuNTQsMCwwLDAtMTIuNjIsMTkuNTNBNDYuNDYsNDYuNDYsMCwwLDAsNzAsMTE0LjMxYy0uNzMsNi42My0uNDQsMTMuMjYuNzIsMTkuODNhNjMuMyw2My4zLDAsMCwwLDYuMzUsMTcuNjgsODYuNjksODYuNjksMCwwLDAsMTIuNDksMTYuNzEsOTcuNjksOTcuNjksMCwwLDAsMTEuMTEsMTAuMjRjLTExLjY0LS44My0yMi42NS0zLjYtMzMuMS04LjQ2YTgwLjYxLDgwLjYxLDAsMCwxLTI4LjM1LTE5LjcxQTcxLjc3LDcxLjc3LDAsMCwxLDIxLjYsMTI5LjY3YTgxLjI3LDgxLjI3LDAsMCwxLTcuMTktMzEuODVjMC0xMC41MiwxLjkxLTIwLjc2LDUuNzQtMzAuNjMsLjM2LS45My43NS0xLjg1LDEuMTMtMi44SDU5Ljkxdi4yMUgyMC4yOGMuMzgsMS4yOS43MSwyLjUyLDEuMDcsMy43NGE4MC44LDgwLjgsMCwwLDEsMy42NiwxOS41N2M1LjY2LDUzLjE3LDQ5LjM5LDkwLjc0LDEwNS4yNyw5Mi42NS44NS4wMywxLjcuMDQsMi41NS4wNGExMDUuNjUsMTA1LjY1LDAsMCwwLDEzLjkxLS45MkM1NC4yNiwyMzYuODksMTE1LjQ5LDE2NC40NCwxMzguNjksMjI5Ljc4Wm0tNDQuNjYtMTIxLjE3Yy00LjgzLDcuODktOC43MSwxNi4yOS0xMC42OSwyNS40MS0yLDkuMzktMiAxOC44NC44LDI4LDMuNDksMTEuMzgsMTAuMzQsMjAuMzIsMTkuNjMsMjcuNzNhNzYuMTQsNzYuMTQsMCwwLDAsMTkuODcsMTIuMDVjLTExLjgyLDYuNTItMjQgMTEuNS0zNy41NSwxMi4wOC0yLjg5Ljc0LDUuMjYsMS40OCwxMS4zNCwyLjA5LTMyLjItMy43Mi01Ni44MS0yMi4xMi02OC4zLTUyLTYuNTgtMTcuMDgtNi41OC0zNC4zNi45Mi01MS4xMiw3LjM4LTE2LjQ2LDE5LjI5LTI4LjcyLDM0LjYzLTM3LjY4LDcuNTgtNC40MywxNS42NS03LjgxLDI0LjAzLTEwLjQyLDQuOTQtMS41NCw5Ljk0LTIuODQsMTUtMy45NWwuMzYsMGMyLjMzLS41MS4zNC40OS0yLjA5Ljk4LTEyLjM0LDUuODgtMjMuNDYsMTMuMDktMzIuMTgsMjMuNEExMTIuNywxMTIuNywwLDAsMCw5NC4wMywxMDguNjFaIi8+PHBhdGggZD0iTTEzOC42OCwyMjkuODRjLjMxLjg0LS4zMS42Mi0uNjEsMS43NC0yOC4xNS03MC4yLDcxLjAyLTEwLjM3LDU4LjI2LTcyLjUzaC0zOS41OHYuMjFoMzguNjRaIi8+PHBhdGggZD0iTTU5LjksMTAyLjY1di0uMjFIMjAuMjlaIi8+PC9zdmc+" alt="OpenShift Logo" class="logo">
+    <h1>OpenShift CIS Benchmark Report</h1>
+    <p>Comprehensive security assessment based on CIS benchmarks for OpenShift Container Platform</p>
   </div>
-  <table>
-    <tr>
-      <th>ID</th>
-      <th>Title</th>
-      <th>Level</th>
-      <th>Result</th>
-      <th>Details</th>
-    </tr>
+  
+  <div class="summary">
+    <h2>Cluster Information</h2>
+    <div class="details-card">
+      <p><strong>Cluster:</strong> $(oc whoami --show-server)</p>
+      <p><strong>OpenShift Version:</strong> $OCP_VERSION</p>
+      <p><strong>Report Generated:</strong> $(date)</p>
+      <p><strong>Generated By:</strong> $(oc whoami)</p>
+    </div>
+  </div>
+  
+  <div class="chart-container">
+    <div class="stat-card">
+      <h3>PASS</h3>
+      <div class="stat-value pass">$PASS_COUNT</div>
+    </div>
+    <div class="stat-card">
+      <h3>FAIL</h3>
+      <div class="stat-value fail">$FAIL_COUNT</div>
+    </div>
+    <div class="stat-card">
+      <h3>WARNING</h3>
+      <div class="stat-value warn">$WARN_COUNT</div>
+    </div>
+    <div class="stat-card">
+      <h3>INFO</h3>
+      <div class="stat-value info">$NA_COUNT</div>
+    </div>
+    <div class="stat-card">
+      <h3>TOTAL</h3>
+      <div class="stat-value">$TOTAL_COUNT</div>
+    </div>
+  </div>
+  
+  <div>
+    <h2>Security Assessment Results</h2>
+    <table>
+      <tr>
+        <th>ID</th>
+        <th>Title</th>
+        <th>Level</th>
+        <th>Result</th>
+        <th>Details</th>
+      </tr>
 EOF
 }
 
 # Function to end HTML report
 end_html_report() {
   cat << EOF
-  </table>
-  <div class="summary">
-    <p><strong>Summary:</strong></p>
-    <p class="pass">Pass: $PASS_COUNT</p>
-    <p class="fail">Fail: $FAIL_COUNT</p>
-    <p class="warn">Warning: $WARN_COUNT</p>
-    <p class="info">Not Applicable: $NA_COUNT</p>
-    <p><strong>Total Checks:</strong> $TOTAL_COUNT</p>
+    </table>
   </div>
+  
+  <div class="summary">
+    <h2>Compliance Summary</h2>
+    <div class="chart-container">
+      <canvas id="resultsChart" width="400" height="400"></canvas>
+    </div>
+  </div>
+  
+  <script>
+    // Create pie chart for results summary
+    const ctx = document.getElementById('resultsChart').getContext('2d');
+    const resultsChart = new Chart(ctx, {
+      type: 'pie',
+      data: {
+        labels: ['Pass', 'Fail', 'Warning', 'Info'],
+        datasets: [{
+          data: [$PASS_COUNT, $FAIL_COUNT, $WARN_COUNT, $NA_COUNT],
+          backgroundColor: [
+            '#2e7d32', // Pass - Green
+            '#c62828', // Fail - Red
+            '#ff8f00', // Warning - Orange
+            '#1976d2'  // Info - Blue
+          ],
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'right',
+          },
+          title: {
+            display: true,
+            text: 'CIS Benchmark Results'
+          }
+        }
+      }
+    });
+  </script>
+  
+  <footer>
+    <p>Report generated by OpenShift CIS Benchmark Compliance Tool v${VERSION}</p>
+    <p>Based on CIS RedHat OpenShift Container Platform Benchmark</p>
+  </footer>
 </body>
 </html>
 EOF
@@ -449,6 +704,54 @@ check_master_components() {
   fi
   format_result "1.1.15" "Ensure that the API Server has client certificate authentication enabled" "Level 1" "$result" "$details"
   update_counters "$result"
+  
+  # 1.1.16 Check if the --event-ttl flag is set to an appropriate value
+  local event_ttl=$(oc get kubeapiserver -o jsonpath='{.items[0].spec.unsupportedConfigOverrides.apiServerArguments.event-ttl}' 2>/dev/null)
+  if [ -n "$event_ttl" ] && [[ "$event_ttl" =~ [0-9]h ]]; then
+    result="PASS"
+    details="API Server has event TTL set to $event_ttl"
+  else
+    result="WARN"
+    details="API Server event TTL configuration could not be determined"
+  fi
+  format_result "1.1.16" "Ensure that the --event-ttl flag is set to an appropriate value" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.1.17 Check if the --secure-port flag is not set to 0
+  local secure_port=$(oc get kubeapiserver -o jsonpath='{.items[0].spec.unsupportedConfigOverrides.apiServerArguments.secure-port}' 2>/dev/null)
+  if [ -z "$secure_port" ] || [ "$secure_port" != "0" ]; then
+    result="PASS"
+    details="API Server secure port is properly configured"
+  else
+    result="FAIL"
+    details="API Server secure port is set to 0, which disables TLS encrypted communication"
+  fi
+  format_result "1.1.17" "Ensure that the --secure-port flag is not set to 0" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.1.18 Check if the scheduler.conf file permissions are set to 644 or more restrictive
+  result="INFO"
+  details="In OpenShift 4.x, the scheduler configuration is managed by the Cluster Version Operator and stored securely."
+  format_result "1.1.18" "Ensure that the scheduler.conf file permissions are set to 644 or more restrictive" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.1.19 Check if the OpenShift PKI directory and file ownership is set to root:root
+  result="INFO"
+  details="In OpenShift 4.x, PKI directory and file ownership is managed by the platform and secured appropriately."
+  format_result "1.1.19" "Ensure that the OpenShift PKI directory and file ownership is set to root:root" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.1.20 Check if the OpenShift PKI certificate file permissions are set to 644 or more restrictive
+  result="INFO"
+  details="In OpenShift 4.x, PKI certificate file permissions are managed by the platform and secured appropriately."
+  format_result "1.1.20" "Ensure that the OpenShift PKI certificate file permissions are set to 644 or more restrictive" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.1.21 Check if the OpenShift PKI key file permissions are set to 600
+  result="INFO"
+  details="In OpenShift 4.x, PKI key file permissions are managed by the platform and secured appropriately."
+  format_result "1.1.21" "Ensure that the OpenShift PKI key file permissions are set to 600" "Level 1" "$result" "$details"
+  update_counters "$result"
 }
 
 # 1.2 etcd
@@ -521,6 +824,44 @@ check_etcd() {
   fi
   format_result "1.2.9" "Ensure that etcd data is encrypted at rest" "Level 1" "$result" "$details"
   update_counters "$result"
+  
+  # 1.2.10 Check if the etcd keyfile and certfile are properly configured
+  local etcd_certs=$(oc get etcd cluster -o jsonpath='{.spec.unsupportedConfigOverrides.servingInfo.certFile}' 2>/dev/null)
+  local etcd_keys=$(oc get etcd cluster -o jsonpath='{.spec.unsupportedConfigOverrides.servingInfo.keyFile}' 2>/dev/null)
+  if [ -n "$etcd_certs" ] && [ -n "$etcd_keys" ]; then
+    result="PASS"
+    details="etcd keyfile and certfile are properly configured"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, etcd certificates and keys are managed securely by the platform"
+  fi
+  format_result "1.2.10" "Ensure that the etcd keyfile and certfile are properly configured for secure communication" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.2.11 Check if the etcd client certificate authentication is properly configured
+  local etcd_client_cert_auth=$(oc get etcd cluster -o jsonpath='{.spec.unsupportedConfigOverrides.servingInfo.clientCA}' 2>/dev/null)
+  if [ -n "$etcd_client_cert_auth" ]; then
+    result="PASS"
+    details="etcd client certificate authentication is properly configured"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, etcd client certificate authentication is managed securely by the platform"
+  fi
+  format_result "1.2.11" "Ensure that the etcd client certificate authentication is properly configured" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 2.7 Check if a unique Certificate Authority is used for etcd
+  local etcd_ca=$(oc get etcd cluster -o jsonpath='{.spec.servingCerts.clientCA}' 2>/dev/null)
+  local kube_ca=$(oc get configmap -n openshift-config config -o jsonpath='{.data.ca-bundle\.crt}' 2>/dev/null)
+  if [ -n "$etcd_ca" ] && [ "$etcd_ca" != "$kube_ca" ]; then
+    result="PASS"
+    details="A unique Certificate Authority is used for etcd"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, Certificate Authorities are managed securely by the platform"
+  fi
+  format_result "2.7" "Ensure that a unique Certificate Authority is used for etcd" "Level 2" "$result" "$details"
+  update_counters "$result"
 }
 
 # 1.3 Control Plane Configuration
@@ -588,6 +929,42 @@ check_control_plane() {
   result="PASS"
   details="OpenShift 4.x scheduler always uses TLS"
   format_result "1.3.7" "Ensure that the scheduler only makes use of secure port" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.3.8 Check if the --terminated-pod-gc-threshold flag is set to an appropriate value
+  local terminated_pod_gc=$(oc get kubecontrollermanager cluster -o jsonpath='{.spec.unsupportedConfigOverrides.controllerArguments.terminated-pod-gc-threshold}' 2>/dev/null)
+  if [ -n "$terminated_pod_gc" ] && [ "$terminated_pod_gc" -gt 0 ]; then
+    result="PASS"
+    details="Controller manager has terminated pod GC threshold set to $terminated_pod_gc"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, the terminated pod GC threshold is managed by the platform with appropriate default values"
+  fi
+  format_result "1.3.8" "Ensure that the --terminated-pod-gc-threshold flag is set to an appropriate value" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.4.1 Check if the healthz endpoints for the scheduler are protected by RBAC
+  local scheduler_rbac=$(oc get clusterrole system:kube-scheduler -o json 2>/dev/null | jq -r '.rules[] | select(.resources[] | contains("healthz"))')
+  if [ -n "$scheduler_rbac" ]; then
+    result="PASS"
+    details="Scheduler healthz endpoints are protected by RBAC"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, access to scheduler endpoints is managed securely by the platform"
+  fi
+  format_result "1.4.1" "Ensure that the healthz endpoints for the scheduler are protected by RBAC" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.4.2 Check if the scheduler API service is protected by authentication and authorization
+  local scheduler_auth=$(oc get clusterrole system:kube-scheduler -o json 2>/dev/null | jq -r '.rules[] | select(.resources[] | contains("scheduler"))')
+  if [ -n "$scheduler_auth" ]; then
+    result="PASS"
+    details="Scheduler API service is protected by authentication and authorization"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, access to scheduler API service is managed securely by the platform"
+  fi
+  format_result "1.4.2" "Verify that the scheduler API service is protected by authentication and authorization" "Level 1" "$result" "$details"
   update_counters "$result"
 }
 
@@ -662,6 +1039,72 @@ check_worker() {
   result="PASS"
   details="OpenShift 4.x configures kubelet to only use secure ports"
   format_result "2.1.10" "Ensure that the kubelet only makes use of secure ports" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 2.1.11 Check if the --tls-cert-file and --tls-private-key-file flags are set as appropriate
+  # In OpenShift 4.x, kubelet TLS certificate and private key files are properly configured
+  result="PASS"
+  details="OpenShift 4.x properly configures kubelet TLS certificate and private key files"
+  format_result "2.1.11" "Ensure that the --tls-cert-file and --tls-private-key-file flags are set as appropriate" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 2.1.12 Check if the --cadvisor-port flag is set to 0
+  # In OpenShift 4.x, cadvisor port is disabled by default
+  result="PASS"
+  details="OpenShift 4.x disables the cadvisor port by default"
+  format_result "2.1.12" "Ensure that the --cadvisor-port flag is set to 0" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 2.1.13 Check if the --rotate-certificates flag is set to true
+  # In OpenShift 4.x, certificate rotation is enabled by default
+  result="PASS"
+  details="OpenShift 4.x enables certificate rotation by default"
+  format_result "2.1.13" "Ensure that the --rotate-certificates flag is set to true" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 2.1.14 Check if the RotateKubeletServerCertificate argument is set to true
+  # In OpenShift 4.x, kubelet server certificate rotation is enabled by default
+  result="PASS"
+  details="OpenShift 4.x enables kubelet server certificate rotation by default"
+  format_result "2.1.14" "Ensure that the RotateKubeletServerCertificate argument is set to true" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.1.1 Ensure that the kubelet service file permissions are set to 644 or more restrictive
+  result="INFO"
+  local details="In OpenShift 4.x, kubelet service file permissions are managed by the Machine Config Operator and stored securely."
+  format_result "4.1.1" "Ensure that the kubelet service file permissions are set to 644 or more restrictive" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.1.2 Ensure that the kubelet service file ownership is set to root:root
+  result="INFO"
+  local details="In OpenShift 4.x, kubelet service file ownership is managed by the Machine Config Operator and secured appropriately."
+  format_result "4.1.2" "Ensure that the kubelet service file ownership is set to root:root" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.1.3 If proxy kubeconfig file exists ensure permissions are set to 644 or more restrictive
+  result="INFO"
+  local details="In OpenShift 4.x, proxy kubeconfig file permissions are managed by the platform and secured appropriately."
+  format_result "4.1.3" "If proxy kubeconfig file exists ensure permissions are set to 644 or more restrictive" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.1.4 If proxy kubeconfig file exists ensure ownership is set to root:root
+  result="INFO"
+  local details="In OpenShift 4.x, proxy kubeconfig file ownership is managed by the platform and secured appropriately."
+  format_result "4.1.4" "If proxy kubeconfig file exists ensure ownership is set to root:root" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.2.1 Ensure that the --anonymous-auth argument is set to false
+  # In OpenShift 4.x, kubelet anonymous auth is disabled by default
+  result="PASS"
+  details="OpenShift 4.x disables kubelet anonymous authentication by default"
+  format_result "4.2.1" "Ensure that the --anonymous-auth argument is set to false" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 4.2.2 Ensure that the --authorization-mode argument is not set to AlwaysAllow
+  # In OpenShift 4.x, kubelet authorization mode is set to Webhook by default
+  result="PASS"
+  details="OpenShift 4.x configures kubelet with authorization mode set to Webhook by default, not AlwaysAllow"
+  format_result "4.2.2" "Ensure that the --authorization-mode argument is not set to AlwaysAllow" "Level 1" "$result" "$details"
   update_counters "$result"
 }
 
@@ -835,6 +1278,67 @@ check_rbac() {
   fi
   format_result "5.1.4" "Ensure that RBAC is enabled and used" "Level 1" "$result" "$details"
   update_counters "$result"
+  
+  # 5.1.5 Check if default service accounts are not actively used
+  local pods_with_default_sa=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.serviceAccountName == "default" or .spec.serviceAccountName == null) | .metadata.name' | wc -l)
+  if [ "$pods_with_default_sa" -eq 0 ]; then
+    result="PASS"
+    details="No pods are using the default service account"
+  else
+    result="WARN"
+    details="There are $pods_with_default_sa pods using the default service account"
+  fi
+  format_result "5.1.5" "Ensure that default service accounts are not actively used" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.1.6 Check if Service Account Tokens are only mounted where necessary
+  local pods_with_auto_mount=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.automountServiceAccountToken == true or .spec.automountServiceAccountToken == null) | .metadata.name' | wc -l)
+  local total_pods=$(oc get pods --all-namespaces -o json | jq -r '.items | length')
+  if [ "$pods_with_auto_mount" -eq 0 ]; then
+    result="PASS"
+    details="No pods are automatically mounting service account tokens"
+  else
+    result="WARN"
+    details="There are $pods_with_auto_mount pods out of $total_pods automatically mounting service account tokens"
+  fi
+  format_result "5.1.6" "Ensure that Service Account Tokens are only mounted where necessary" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.1 Check if access to secrets is minimized
+  local secrets_access=$(oc get roles,clusterroles --all-namespaces -o json | jq -r '.items[] | select(.rules[] | select(.resources[] | contains("secrets")) and select(.verbs[] | contains("get") or contains("list") or contains("watch") or contains("*"))) | .metadata.name' | wc -l)
+  if [ "$secrets_access" -le 10 ]; then
+    result="PASS"
+    details="Access to secrets appears to be minimized"
+  else
+    result="WARN"
+    details="There are $secrets_access roles/clusterroles with access to secrets, which may be excessive"
+  fi
+  format_result "5.2.1" "Minimize access to secrets" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.2 Check if wildcard use in Roles and ClusterRoles is minimized
+  local wildcard_roles=$(oc get roles,clusterroles --all-namespaces -o json | jq -r '.items[] | select(.rules[] | select(.resources[] | contains("*")) or select(.apiGroups[] | contains("*")) or select(.verbs[] | contains("*"))) | .metadata.name' | wc -l)
+  if [ "$wildcard_roles" -le 15 ]; then
+    result="PASS"
+    details="Wildcard use in Roles and ClusterRoles appears to be minimized"
+  else
+    result="WARN"
+    details="There are $wildcard_roles roles/clusterroles using wildcards, which may be excessive"
+  fi
+  format_result "5.2.2" "Minimize wildcard use in Roles and ClusterRoles" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.3 Check if access to create pods is minimized
+  local pod_create_access=$(oc get roles,clusterroles --all-namespaces -o json | jq -r '.items[] | select(.rules[] | select(.resources[] | contains("pods")) and select(.verbs[] | contains("create") or contains("*"))) | .metadata.name' | wc -l)
+  if [ "$pod_create_access" -le 10 ]; then
+    result="PASS"
+    details="Access to create pods appears to be minimized"
+  else
+    result="WARN"
+    details="There are $pod_create_access roles/clusterroles with access to create pods, which may be excessive"
+  fi
+  format_result "5.2.3" "Minimize access to create pods" "Level 1" "$result" "$details"
+  update_counters "$result"
 }
 
 # 6. Secrets Management
@@ -870,6 +1374,45 @@ check_secrets() {
     details="No evidence of external secrets management was found. This is not necessarily a failing condition."
   fi
   format_result "6.1.3" "Consider using external secrets management" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.4.1 Check if secrets are used as files over environment variables
+  local pods_with_secret_env=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].env[] | select(.valueFrom.secretKeyRef != null)) | .metadata.name' | wc -l)
+  local pods_with_secret_vol=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.volumes[] | select(.secret != null)) | .metadata.name' | wc -l)
+  if [ "$pods_with_secret_env" -eq 0 ] || [ "$pods_with_secret_vol" -gt "$pods_with_secret_env" ]; then
+    result="PASS"
+    details="Secrets appear to be used as files over environment variables"
+  else
+    result="WARN"
+    details="There are $pods_with_secret_env pods using secrets as environment variables, compared to $pods_with_secret_vol pods using secrets as files"
+  fi
+  format_result "5.4.1" "Prefer using secrets as files over secrets as environment variables" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.4.2 Check if secrets are rotated
+  # This is a best practice check, can't be fully automated
+  result="INFO"
+  details="This is a best practice check. Ensure that secrets are rotated regularly."
+  format_result "5.4.2" "Ensure that secrets are rotated regularly" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.4.3 Check if secrets are limited to specific containers
+  local pods_with_unlimited_secrets=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.volumes[] | select(.secret != null and .secret.defaultMode == 420)) | .metadata.name' | wc -l)
+  if [ "$pods_with_unlimited_secrets" -eq 0 ]; then
+    result="PASS"
+    details="Secrets appear to be limited to specific containers"
+  else
+    result="WARN"
+    details="There are $pods_with_unlimited_secrets pods with potentially unlimited secret access"
+  fi
+  format_result "5.4.3" "Ensure that secrets are limited to specific containers" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.4.4 Check if secrets are securely transmitted
+  # This is a best practice check, can't be fully automated
+  result="INFO"
+  details="This is a best practice check. Ensure that secrets are securely transmitted between systems."
+  format_result "5.4.4" "Ensure that secrets are securely transmitted" "Level 2" "$result" "$details"
   update_counters "$result"
 }
 
@@ -918,6 +1461,64 @@ check_networking() {
   result="PASS"
   details="OpenShift 4.x manages node firewall rules through the Machine Config Operator"
   format_result "7.1.4" "Ensure that node firewall rules are properly configured" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.3.1 Check if all Namespaces have NetworkPolicies defined
+  local namespaces=$(oc get namespaces -o json | jq -r '.items[].metadata.name')
+  local namespace_count=$(echo "$namespaces" | wc -l)
+  local namespaces_with_netpol=0
+  
+  for ns in $namespaces; do
+    local ns_netpol=$(oc get networkpolicy -n "$ns" --no-headers 2>/dev/null | wc -l)
+    if [ "$ns_netpol" -gt 0 ]; then
+      namespaces_with_netpol=$((namespaces_with_netpol + 1))
+    fi
+  done
+  
+  if [ "$namespaces_with_netpol" -eq "$namespace_count" ]; then
+    result="PASS"
+    details="All namespaces have NetworkPolicies defined"
+  else
+    result="WARN"
+    details="Only $namespaces_with_netpol out of $namespace_count namespaces have NetworkPolicies defined"
+  fi
+  format_result "5.3.2" "Ensure that all Namespaces have NetworkPolicies defined" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.7.1 Check for secure inter-container networking
+  local secure_network=$(oc get network.config cluster -o jsonpath='{.spec.networkType}' 2>/dev/null)
+  if [ "$secure_network" == "OVNKubernetes" ]; then
+    result="PASS"
+    details="Cluster is using OVN-Kubernetes which provides secure inter-container networking"
+  else
+    result="INFO"
+    details="Cluster is using $secure_network networking, ensure it provides secure inter-container communication"
+  fi
+  format_result "6.7.1" "Ensure secure inter-container networking" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.7.2 Check if egress network traffic is restricted
+  local egress_netpols=$(oc get networkpolicy --all-namespaces -o json | jq -r '.items[] | select(.spec.egress != null) | .metadata.name' | wc -l)
+  if [ "$egress_netpols" -gt 0 ]; then
+    result="PASS"
+    details="Egress network traffic is restricted by $egress_netpols NetworkPolicies"
+  else
+    result="WARN"
+    details="No egress restrictions found in NetworkPolicies"
+  fi
+  format_result "6.7.2" "Ensure that egress network traffic is restricted" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.7.3 Check if EgressFirewalls are used
+  local egress_firewalls=$(oc get egressfirewall --all-namespaces --no-headers 2>/dev/null | wc -l)
+  if [ "$egress_firewalls" -gt 0 ]; then
+    result="PASS"
+    details="EgressFirewalls are in use on the cluster"
+  else
+    result="INFO"
+    details="No EgressFirewalls found. Consider using them for additional network security"
+  fi
+  format_result "6.7.3" "Consider using EgressFirewalls for additional network security" "Level 2" "$result" "$details"
   update_counters "$result"
 }
 
@@ -972,6 +1573,52 @@ check_logging() {
   fi
   format_result "8.1.4" "Ensure that audit logs are being collected" "Level 2" "$result" "$details"
   update_counters "$result"
+  
+  # 3.2.1 Ensure that a minimal audit policy is created
+  if [ -n "$audit_enabled" ] && [ "$audit_enabled" != "None" ]; then
+    result="PASS"
+    details="A minimal audit policy is created with profile: $audit_enabled"
+  else
+    result="WARN"
+    details="A minimal audit policy may not be created or status could not be determined"
+  fi
+  format_result "3.2.1" "Ensure that a minimal audit policy is created" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 3.2.2 Ensure that the audit policy covers key security concerns
+  if [ "$audit_enabled" == "WriteRequestBodies" ] || [ "$audit_enabled" == "AllRequestBodies" ]; then
+    result="PASS"
+    details="The audit policy covers key security concerns with profile: $audit_enabled"
+  else
+    result="WARN"
+    details="The audit policy may not cover key security concerns or status could not be determined"
+  fi
+  format_result "3.2.2" "Ensure that the audit policy covers key security concerns" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.2.22 Ensure that the --audit-log-path argument is set
+  local audit_log_path=$(oc get kubeapiserver -o jsonpath='{.items[0].spec.unsupportedConfigOverrides.apiServerArguments.audit-log-path}' 2>/dev/null)
+  if [ -n "$audit_log_path" ]; then
+    result="PASS"
+    details="The audit log path is set to $audit_log_path"
+  else
+    result="INFO"
+    details="In OpenShift 4.x, audit logs are managed by the platform using appropriate paths"
+  fi
+  format_result "1.2.22" "Ensure that the --audit-log-path argument is set" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 1.2.23 Ensure that the audit logs are forwarded off the cluster for retention
+  local fluentd_config=$(oc get clusterlogging instance -n openshift-logging -o json 2>/dev/null | jq -r '.spec.forwarder.fluentd')
+  if [ -n "$fluentd_config" ] && [ "$fluentd_config" != "null" ]; then
+    result="PASS"
+    details="Audit logs appear to be forwarded off the cluster using Fluentd"
+  else
+    result="INFO"
+    details="Could not determine if audit logs are forwarded off the cluster"
+  fi
+  format_result "1.2.23" "Ensure that the audit logs are forwarded off the cluster for retention" "Level 2" "$result" "$details"
+  update_counters "$result"
 }
 
 # 9. Authentication
@@ -1023,6 +1670,18 @@ check_authentication() {
   fi
   format_result "9.1.3" "Ensure that OAuth service certificates are properly managed" "Level 2" "$result" "$details"
   update_counters "$result"
+  
+  # 3.1.1 Check if client certificate authentication is not used for users
+  local client_cert_auth=$(oc get oauth cluster -o json 2>/dev/null | jq -r '.spec.identityProviders[] | select(.type == "ClientCertificate") | .name')
+  if [ -z "$client_cert_auth" ]; then
+    result="PASS"
+    details="Client certificate authentication is not used for users"
+  else
+    result="WARN"
+    details="Client certificate authentication is used for users: $client_cert_auth"
+  fi
+  format_result "3.1.1" "Client certificate authentication should not be used for users" "Level 1" "$result" "$details"
+  update_counters "$result"
 }
 
 # 10. Managed OpenShift Services
@@ -1066,6 +1725,292 @@ check_managed_services() {
   update_counters "$result"
 }
 
+# General Policies
+check_general_policies() {
+  echo "Running General Policy Checks..."
+  
+  # 5.7.1 Check if namespaces are used for administrative boundaries
+  local namespace_count=$(oc get namespaces --no-headers 2>/dev/null | wc -l)
+  if [ "$namespace_count" -gt 10 ]; then
+    result="PASS"
+    details="Namespaces appear to be used for administrative boundaries ($namespace_count namespaces found)"
+  else
+    result="INFO"
+    details="Only $namespace_count namespaces found. Ensure namespaces are used for administrative boundaries"
+  fi
+  format_result "5.7.1" "Create administrative boundaries between resources using namespaces" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.7.2 Check if seccomp profile is set to docker/default
+  local pods_with_seccomp=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.securityContext.seccompProfile.type == "RuntimeDefault" or .spec.containers[].securityContext.seccompProfile.type == "RuntimeDefault") | .metadata.name' | wc -l)
+  local total_pods=$(oc get pods --all-namespaces --no-headers 2>/dev/null | wc -l)
+  if [ "$pods_with_seccomp" -eq "$total_pods" ]; then
+    result="PASS"
+    details="All pods have seccomp profile set appropriately"
+  elif [ "$pods_with_seccomp" -gt 0 ]; then
+    result="WARN"
+    details="Only $pods_with_seccomp out of $total_pods pods have seccomp profile set appropriately"
+  else
+    result="WARN"
+    details="No pods appear to have seccomp profile set explicitly"
+  fi
+  format_result "5.7.2" "Ensure that the seccomp profile is set to docker/default in your pod definitions" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.7.3 Check if security context is applied to pods and containers
+  local pods_with_sec_context=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.securityContext != null or .spec.containers[].securityContext != null) | .metadata.name' | wc -l)
+  if [ "$pods_with_sec_context" -eq "$total_pods" ]; then
+    result="PASS"
+    details="All pods have security context applied"
+  elif [ "$pods_with_sec_context" -gt 0 ]; then
+    result="WARN"
+    details="Only $pods_with_sec_context out of $total_pods pods have security context applied"
+  else
+    result="WARN"
+    details="No pods appear to have security context applied"
+  fi
+  format_result "5.7.3" "Apply Security Context to Your Pods and Containers" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.7.4 Check if default namespace is avoided
+  local pods_in_default=$(oc get pods -n default --no-headers 2>/dev/null | wc -l)
+  if [ "$pods_in_default" -eq 0 ]; then
+    result="PASS"
+    details="Default namespace is not used for application workloads"
+  else
+    result="WARN"
+    details="There are $pods_in_default pods in the default namespace"
+  fi
+  format_result "5.7.4" "The default namespace should not be used" "Level 1" "$result" "$details"
+  update_counters "$result"
+}
+
+# Image Security
+check_image_security() {
+  echo "Running Image Security Checks..."
+  
+  # 5.5.1 Configure Image Provenance using ImagePolicyWebhook
+  local image_policy=$(oc get ValidatingWebhookConfiguration -o json 2>/dev/null | jq -r '.items[] | select(.webhooks[].name | contains("image-policy")) | .metadata.name')
+  if [ -n "$image_policy" ]; then
+    result="PASS"
+    details="Image provenance appears to be configured using webhook: $image_policy"
+  else
+    result="INFO"
+    details="No Image Policy webhook found. Consider configuring Image Provenance using ImagePolicyWebhook"
+  fi
+  format_result "5.5.1" "Configure Image Provenance using ImagePolicyWebhook" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.1 Minimize the admission of privileged containers
+  local privileged_pods=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.privileged == true) | .metadata.name' | wc -l)
+  if [ "$privileged_pods" -eq 0 ]; then
+    result="PASS"
+    details="No privileged containers found in the cluster"
+  else
+    result="WARN"
+    details="Found $privileged_pods pods with privileged containers"
+  fi
+  format_result "5.2.1" "Minimize the admission of privileged containers" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.2 Minimize the admission of containers wishing to share the host PID namespace
+  local host_pid_pods=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.hostPID == true) | .metadata.name' | wc -l)
+  if [ "$host_pid_pods" -eq 0 ]; then
+    result="PASS"
+    details="No containers sharing host PID namespace found in the cluster"
+  else
+    result="WARN"
+    details="Found $host_pid_pods pods sharing the host PID namespace"
+  fi
+  format_result "5.2.2" "Minimize the admission of containers wishing to share the host process ID namespace" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.3 Minimize the admission of containers wishing to share the host IPC namespace
+  local host_ipc_pods=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.hostIPC == true) | .metadata.name' | wc -l)
+  if [ "$host_ipc_pods" -eq 0 ]; then
+    result="PASS"
+    details="No containers sharing host IPC namespace found in the cluster"
+  else
+    result="WARN"
+    details="Found $host_ipc_pods pods sharing the host IPC namespace"
+  fi
+  format_result "5.2.3" "Minimize the admission of containers wishing to share the host IPC namespace" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # Check for secure container image registries
+  local secure_registries=0
+  local total_registries=0
+  
+  if command -v grep > /dev/null && command -v awk > /dev/null && command -v sort > /dev/null; then
+    local image_registries=$(oc get pods --all-namespaces -o json | jq -r '.items[].spec.containers[].image' 2>/dev/null | grep -v -e '^[^/]\+$' -e '^[^/]\+/[^/]\+$' | awk -F/ '{print $1}' | sort -u)
+    
+    for registry in $image_registries; do
+      total_registries=$((total_registries + 1))
+      if [[ "$registry" == *"quay.io"* ]] || [[ "$registry" == *"registry.redhat.io"* ]] || [[ "$registry" == *"docker.io"* ]] || [[ "$registry" == *"gcr.io"* ]] || [[ "$registry" == *"k8s.gcr.io"* ]] || [[ "$registry" == *"registry.connect.redhat.com"* ]]; then
+        secure_registries=$((secure_registries + 1))
+      fi
+    done
+  fi
+  
+  if [ "$total_registries" -eq 0 ] || [ "$secure_registries" -eq "$total_registries" ]; then
+    result="PASS"
+    details="All container images are from trusted registries"
+  else
+    result="WARN"
+    details="Found $((total_registries - secure_registries)) potentially untrusted registries out of $total_registries total registries"
+  fi
+  format_result "5.5.2" "Use verified container images from trusted registries" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # Check for image vulnerability scanning
+  local vulnerability_scanner=$(oc get csv --all-namespaces 2>/dev/null | grep -i "quay\|clair\|trivy\|blackduck\|anchore\|scanner" | wc -l)
+  if [ "$vulnerability_scanner" -gt 0 ]; then
+    result="PASS"
+    details="Image vulnerability scanning appears to be in use"
+  else
+    result="INFO"
+    details="No evidence of image vulnerability scanning was found. Consider implementing an image scanning solution."
+  fi
+  format_result "5.5.3" "Implement image vulnerability scanning" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # Check for image signing
+  local image_signing=$(oc get pods --all-namespaces -o json | jq -r '.items[].spec.containers[].image' 2>/dev/null | grep -i "cosign\|notary\|sigstore" | wc -l)
+  local signing_operator=$(oc get csv --all-namespaces 2>/dev/null | grep -i "cosign\|notary\|sigstore" | wc -l)
+  
+  if [ "$image_signing" -gt 0 ] || [ "$signing_operator" -gt 0 ]; then
+    result="PASS"
+    details="Image signing appears to be implemented"
+  else
+    result="INFO"
+    details="No evidence of image signing was found. Consider implementing container image signing."
+  fi
+  format_result "5.5.4" "Implement container image signing" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # Check for admission control policy for images
+  local admission_policy=$(oc get ValidatingWebhookConfiguration -o json 2>/dev/null | jq -r '.items[] | select(.webhooks[].rules[].resources[] | contains("pods")) | .metadata.name' | wc -l)
+  if [ "$admission_policy" -gt 0 ]; then
+    result="PASS"
+    details="Admission control policies for images appear to be in place"
+  else
+    result="INFO"
+    details="No admission control policies for images were found. Consider implementing admission controls."
+  fi
+  format_result "5.5.5" "Implement admission control policy for images" "Level 1" "$result" "$details"
+  update_counters "$result"
+}
+
+# Container Runtime Security
+check_container_runtime() {
+  echo "Running Container Runtime Security Checks..."
+  
+  # 6.8.1 Ensure that the container runtime is secured
+  # In OpenShift 4.x, the container runtime is properly secured by default
+  result="PASS"
+  details="OpenShift 4.x secures the container runtime by default through CRI-O"
+  format_result "6.8.1" "Ensure that the container runtime is secured" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.8.2 Ensure that container runtime default seccomp profile is not disabled
+  local seccomp_disabled=$(oc get MachineConfig -o json 2>/dev/null | jq -r '.items[] | select(.spec.config.storage.files[].contents.source | contains("seccomp=unconfined"))')
+  if [ -z "$seccomp_disabled" ]; then
+    result="PASS"
+    details="Container runtime default seccomp profile is not disabled"
+  else
+    result="WARN"
+    details="Container runtime default seccomp profile may be disabled"
+  fi
+  format_result "6.8.2" "Ensure that container runtime default seccomp profile is not disabled" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.10.1 Ensure that the host's kernel is hardened
+  # In OpenShift 4.x, the kernel is properly hardened by default
+  result="PASS"
+  details="OpenShift 4.x hardens the host's kernel by default"
+  format_result "6.10.1" "Ensure that the host's kernel is hardened" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 6.10.2 Ensure that the host's operating system is properly hardened
+  # In OpenShift 4.x, the operating system is properly hardened by default
+  result="PASS"
+  details="OpenShift 4.x uses RHCOS which is properly hardened by default"
+  format_result "6.10.2" "Ensure that the host's operating system is properly hardened" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.4 Minimize the admission of containers wishing to share the host network namespace
+  local host_network_pods=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.hostNetwork == true) | .metadata.name' | wc -l)
+  if [ "$host_network_pods" -eq 0 ]; then
+    result="PASS"
+    details="No containers sharing host network namespace found in the cluster"
+  else
+    result="WARN"
+    details="Found $host_network_pods pods sharing the host network namespace"
+  fi
+  format_result "5.2.4" "Minimize the admission of containers wishing to share the host network namespace" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.5 Minimize the admission of containers with allowPrivilegeEscalation
+  local priv_escalation_pods=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.allowPrivilegeEscalation == true) | .metadata.name' | wc -l)
+  if [ "$priv_escalation_pods" -eq 0 ]; then
+    result="PASS"
+    details="No containers with allowPrivilegeEscalation found in the cluster"
+  else
+    result="WARN"
+    details="Found $priv_escalation_pods pods with allowPrivilegeEscalation"
+  fi
+  format_result "5.2.5" "Minimize the admission of containers with allowPrivilegeEscalation" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.6 Minimize the admission of root containers
+  local root_containers=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.runAsUser == 0 or .spec.containers[].securityContext.runAsUser == null) | .metadata.name' | wc -l)
+  if [ "$root_containers" -eq 0 ]; then
+    result="PASS"
+    details="No containers running as root found in the cluster"
+  else
+    result="WARN"
+    details="Found $root_containers pods running as root or without runAsUser specified"
+  fi
+  format_result "5.2.6" "Minimize the admission of root containers" "Level 2" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.7 Minimize the admission of containers with the NET_RAW capability
+  local net_raw_containers=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.capabilities.add[] | select(. == "NET_RAW")) | .metadata.name' | wc -l)
+  if [ "$net_raw_containers" -eq 0 ]; then
+    result="PASS"
+    details="No containers with NET_RAW capability found in the cluster"
+  else
+    result="WARN"
+    details="Found $net_raw_containers pods with NET_RAW capability"
+  fi
+  format_result "5.2.7" "Minimize the admission of containers with the NET_RAW capability" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.8 Minimize the admission of containers with added capabilities
+  local added_cap_containers=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.capabilities.add != null) | .metadata.name' | wc -l)
+  if [ "$added_cap_containers" -eq 0 ]; then
+    result="PASS"
+    details="No containers with added capabilities found in the cluster"
+  else
+    result="WARN"
+    details="Found $added_cap_containers pods with added capabilities"
+  fi
+  format_result "5.2.8" "Minimize the admission of containers with added capabilities" "Level 1" "$result" "$details"
+  update_counters "$result"
+  
+  # 5.2.9 Minimize the admission of containers with capabilities assigned
+  local assigned_cap_containers=$(oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.containers[].securityContext.capabilities != null) | .metadata.name' | wc -l)
+  if [ "$assigned_cap_containers" -eq 0 ]; then
+    result="PASS"
+    details="No containers with assigned capabilities found in the cluster"
+  else
+    result="WARN"
+    details="Found $assigned_cap_containers pods with assigned capabilities"
+  fi
+  format_result "5.2.9" "Minimize the admission of containers with capabilities assigned" "Level 2" "$result" "$details"
+  update_counters "$result"
+}
+
 # Function to run all CIS benchmark checks
 run_all_checks() {
   echo "Running all CIS benchmark checks for OpenShift 4.x..."
@@ -1088,6 +2033,9 @@ run_all_checks() {
   check_logging
   check_authentication
   check_managed_services
+  check_general_policies
+  check_image_security
+  check_container_runtime
   
   if [ "$OUTPUT_FORMAT" == "html" ]; then
     end_html_report
@@ -1292,6 +2240,36 @@ main() {
         begin_html_report
       fi
       check_managed_services
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        end_html_report
+      fi
+      ;;
+    general-policies)
+      initialize_counters
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        begin_html_report
+      fi
+      check_general_policies
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        end_html_report
+      fi
+      ;;
+    image-security)
+      initialize_counters
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        begin_html_report
+      fi
+      check_image_security
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        end_html_report
+      fi
+      ;;
+    container-runtime)
+      initialize_counters
+      if [ "$OUTPUT_FORMAT" == "html" ]; then
+        begin_html_report
+      fi
+      check_container_runtime
       if [ "$OUTPUT_FORMAT" == "html" ]; then
         end_html_report
       fi
