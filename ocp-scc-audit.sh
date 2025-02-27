@@ -281,7 +281,12 @@ high_risk() {
 <body>
     <h1>OpenShift High-Risk SCCs</h1>
     <p>The following Security Context Constraints grant elevated privileges and should be carefully audited:</p>
-    <p><strong>High-Risk SCCs:</strong> $(echo "${high_risk_sccs[*]}")</p>
+    <div style="margin-top: 15px; margin-bottom: 25px;">
+        <p style="margin-bottom: 10px;"><strong>High-Risk SCCs:</strong></p>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+            $(for scc in "${high_risk_sccs[@]}"; do echo "<span style=\"background-color: #f8d7da; color: #721c24; padding: 8px 15px; border-radius: 4px; font-weight: bold;\">$scc</span>"; done)
+        </div>
+    </div>
 EOF
     
     for scc in "${high_risk_sccs[@]}"; do
@@ -481,87 +486,195 @@ generate_report() {
     <title>OpenShift Security Context Constraints Audit Report</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
-            margin: 40px;
+            margin: 0;
+            padding: 0;
             color: #333;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            border-radius: 5px;
+        }
+        header {
+            background-color: #151c39;
+            color: white;
+            padding: 30px 20px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+        header::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 30%;
+            background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.1) 100%);
+            z-index: 1;
         }
         h1 {
-            color: #cc0000;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
         }
         h2 {
-            color: #cc0000;
-            margin-top: 30px;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 5px;
+            color: #151c39;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+            font-size: 22px;
+            font-weight: 600;
         }
         h3 {
             color: #333;
-            margin-top: 20px;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        h4 {
+            color: #4c5b76;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            font-size: 16px;
+            font-weight: 600;
         }
         table {
             border-collapse: collapse;
             width: 100%;
             margin: 20px 0;
+            background-color: #fff;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
         }
         th, td {
             text-align: left;
-            padding: 12px;
-            border: 1px solid #ddd;
+            padding: 15px;
+            border: 1px solid #eee;
         }
         th {
-            background-color: #f2f2f2;
+            background-color: #f2f6fc;
+            color: #151c39;
+            font-weight: 600;
         }
         tr:nth-child(even) {
-            background-color: #f9f9f9;
+            background-color: #f9fbff;
+        }
+        tr:hover {
+            background-color: #f0f4fa;
         }
         .risk-high {
-            color: #cc0000;
+            color: #e53935;
             font-weight: bold;
         }
         .risk-medium {
-            color: #ec7a08;
+            color: #f57c00;
             font-weight: bold;
         }
         .risk-low {
-            color: #4f9e4f;
+            color: #43a047;
         }
         .timestamp {
-            color: #666;
+            color: #767676;
             font-style: italic;
             font-size: 0.9em;
+            margin-bottom: 10px;
         }
         .true {
-            color: #cc0000;
+            color: #e53935;
             font-weight: bold;
         }
         .false {
-            color: #4f9e4f;
+            color: #43a047;
         }
         ul {
-            list-style-type: square;
+            list-style-type: none;
+            padding-left: 0;
+        }
+        ul li {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        ul li:before {
+            content: "•";
+            color: #151c39;
+            font-weight: bold;
+            display: inline-block;
+            width: 20px;
+        }
+        .summary-box {
+            background-color: #f2f6fc;
+            border-left: 4px solid #151c39;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .cluster-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-top: 10px;
+        }
+        .cluster-info p {
+            margin: 0;
+            background-color: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 50px;
+            font-size: 14px;
+        }
+        .section-title {
+            display: flex;
+            align-items: center;
+        }
+        .section-title:before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 24px;
+            background-color: #151c39;
+            margin-right: 10px;
+            border-radius: 5px;
         }
     </style>
 </head>
 <body>
-    <h1>OpenShift Security Context Constraints Audit Report</h1>
-    <p class="timestamp">Generated: $(date)</p>
-    <p>Cluster: $(oc whoami --show-server)</p>
-    <p>User: $(oc whoami)</p>
+<div class="container">
+    <header>
+        <h1>OpenShift Security Context Constraints Audit Report</h1>
+        <div class="cluster-info">
+            <p>Generated: $(date)</p>
+            <p>Cluster: $(oc whoami --show-server)</p>
+            <p>User: $(oc whoami)</p>
+        </div>
+    </header>
     
-    <h2>Summary</h2>
+    <h2 class="section-title">Summary</h2>
+    <div class="summary-box">
 EOF
     
     # Add summary information
-    echo "<p>Total SCCs: $(oc get scc -o name | wc -l)</p>" >> "$report_file"
-    echo "<p>Custom SCCs: $(oc get scc --no-headers | grep -v -E '^restricted|^nonroot|^hostmount-anyuid|^anyuid|^hostnetwork|^hostaccess|^privileged' | wc -l)</p>" >> "$report_file"
+    echo "<p>Total SCCs: <strong>$(oc get scc -o name | wc -l)</strong></p>" >> "$report_file"
+    echo "<p>Custom SCCs: <strong>$(oc get scc --no-headers | grep -v -E '^restricted|^nonroot|^hostmount-anyuid|^anyuid|^hostnetwork|^hostaccess|^privileged' | wc -l)</strong></p>" >> "$report_file"
+    echo "</div>" >> "$report_file"
     
     # Add high-risk SCCs section
     cat << EOF >> "$report_file"
-    <h2>High-Risk SCCs</h2>
-    <p>The following SCCs grant elevated privileges and should be carefully audited:</p>
+    <h2 class="section-title">High-Risk SCCs</h2>
+    <p>The following Security Context Constraints grant elevated privileges and should be carefully audited:</p>
+    
+    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0;">
+        $(for scc in "${high_risk_sccs[@]}"; do echo "<span style=\"background-color: #f8d7da; color: #721c24; padding: 8px 15px; border-radius: 4px; font-weight: bold;\">$scc</span>"; done)
+    </div>
 EOF
     
     local high_risk_sccs=("privileged" "anyuid" "hostaccess" "hostnetwork" "hostmount-anyuid" "hostpath")
@@ -577,19 +690,45 @@ EOF
         local allow_host_ipc=$(oc get scc "$scc" -o jsonpath='{.allowHostIPC}')
         local allow_priv_esc=$(oc get scc "$scc" -o jsonpath='{.allowPrivilegeEscalation}')
         
-        echo "<h3>$scc</h3>" >> "$report_file"
-        echo "<ul>" >> "$report_file"
-        echo "<li>Priority: $(oc get scc "$scc" -o jsonpath='{.priority}')</li>" >> "$report_file"
-        echo "<li>Allow Privileged: <span class=\"$(if [ \"$allow_priv\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_priv</span></li>" >> "$report_file"
-        echo "<li>Allow Host Network: <span class=\"$(if [ \"$allow_host_net\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_net</span></li>" >> "$report_file"
-        echo "<li>Allow Host Ports: <span class=\"$(if [ \"$allow_host_ports\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_ports</span></li>" >> "$report_file"
-        echo "<li>Allow Host PID: <span class=\"$(if [ \"$allow_host_pid\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_pid</span></li>" >> "$report_file"
-        echo "<li>Allow Host IPC: <span class=\"$(if [ \"$allow_host_ipc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_ipc</span></li>" >> "$report_file"
-        echo "<li>Allow Privilege Escalation: <span class=\"$(if [ \"$allow_priv_esc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_priv_esc</span></li>" >> "$report_file"
-        echo "</ul>" >> "$report_file"
+        cat << EOF >> "$report_file"
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); margin: 20px 0; padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">SCC: <span class="risk-high">$scc</span></h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Priority:</span> $(oc get scc "$scc" -o jsonpath='{.priority}')
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Privileged:</span> 
+                    <span class="$(if [ \"$allow_priv\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_priv</span>
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Host Network:</span> 
+                    <span class="$(if [ \"$allow_host_net\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_net</span>
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Host Ports:</span> 
+                    <span class="$(if [ \"$allow_host_ports\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_ports</span>
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Host PID:</span> 
+                    <span class="$(if [ \"$allow_host_pid\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_pid</span>
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Host IPC:</span> 
+                    <span class="$(if [ \"$allow_host_ipc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_ipc</span>
+                </div>
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                    <span style="font-weight: bold;">Allow Privilege Escalation:</span> 
+                    <span class="$(if [ \"$allow_priv_esc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_priv_esc</span>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h4>Assigned Users</h4>
+                    <ul style="background-color: #f9fbff; border-radius: 4px; padding: 10px;">
+EOF
         
-        echo "<h4>Assigned Users:</h4>" >> "$report_file"
-        echo "<ul>" >> "$report_file"
         if [ -z "$users" ]; then
           echo "<li>None</li>" >> "$report_file"
         else
@@ -597,10 +736,15 @@ EOF
             echo "<li>$user</li>" >> "$report_file"
           done
         fi
-        echo "</ul>" >> "$report_file"
         
-        echo "<h4>Assigned Groups:</h4>" >> "$report_file"
-        echo "<ul>" >> "$report_file"
+        cat << EOF >> "$report_file"
+                    </ul>
+                </div>
+                <div>
+                    <h4>Assigned Groups</h4>
+                    <ul style="background-color: #f9fbff; border-radius: 4px; padding: 10px;">
+EOF
+        
         if [ -z "$groups" ]; then
           echo "<li>None</li>" >> "$report_file"
         else
@@ -608,14 +752,18 @@ EOF
             echo "<li>$group</li>" >> "$report_file"
           done
         fi
-        echo "</ul>" >> "$report_file"
+        
+        echo "                    </ul>" >> "$report_file"
+        echo "                </div>" >> "$report_file"
+        echo "            </div>" >> "$report_file"
+        echo "        </div>" >> "$report_file"
       fi
     done
     
     # Add custom SCCs section
     cat << EOF >> "$report_file"
-    <h2>Custom SCCs</h2>
-    <p>The following custom SCCs have been defined in the cluster:</p>
+    <h2 class="section-title">Custom SCCs</h2>
+    <p>The following custom Security Context Constraints have been defined in the cluster:</p>
 EOF
     
     for scc in $(oc get scc --no-headers | grep -v -E '^restricted|^nonroot|^hostmount-anyuid|^anyuid|^hostnetwork|^hostaccess|^privileged' | awk '{print $1}'); do
@@ -628,26 +776,58 @@ EOF
       local read_only_root=$(oc get scc "$scc" -o jsonpath='{.readOnlyRootFilesystem}')
       local run_as_user=$(oc get scc "$scc" -o jsonpath='{.runAsUser.type}')
       local selinux_context=$(oc get scc "$scc" -o jsonpath='{.seLinuxContext.type}')
-      
-      echo "<h3>$scc</h3>" >> "$report_file"
-      echo "<ul>" >> "$report_file"
-      echo "<li>Priority: $(oc get scc "$scc" -o jsonpath='{.priority}')</li>" >> "$report_file"
-      echo "<li>Allow Privileged: <span class=\"$(if [ \"$allow_priv\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_priv</span></li>" >> "$report_file"
-      echo "<li>Allow Host Network: <span class=\"$(if [ \"$allow_host_net\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_net</span></li>" >> "$report_file"
-      echo "<li>Allow Host Ports: <span class=\"$(if [ \"$allow_host_ports\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_ports</span></li>" >> "$report_file"
-      echo "<li>Allow Host PID: <span class=\"$(if [ \"$allow_host_pid\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_pid</span></li>" >> "$report_file"
-      echo "<li>Allow Host IPC: <span class=\"$(if [ \"$allow_host_ipc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_host_ipc</span></li>" >> "$report_file"
-      echo "<li>Allow Privilege Escalation: <span class=\"$(if [ \"$allow_priv_esc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$allow_priv_esc</span></li>" >> "$report_file"
-      echo "<li>Read-Only Root Filesystem: <span class=\"$(if [ \"$read_only_root\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)\">$read_only_root</span></li>" >> "$report_file"
-      echo "<li>Run As User Strategy: $run_as_user</li>" >> "$report_file"
-      echo "<li>SELinux Context Strategy: $selinux_context</li>" >> "$report_file"
-      echo "</ul>" >> "$report_file"
-      
       local users=$(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')
       local groups=$(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')
       
-      echo "<h4>Users:</h4>" >> "$report_file"
-      echo "<ul>" >> "$report_file"
+      cat << EOF >> "$report_file"
+      <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); margin: 20px 0; padding: 20px;">
+          <h3 style="color: #151c39; margin-top: 0;">SCC: $scc</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px;">
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Priority:</span> $(oc get scc "$scc" -o jsonpath='{.priority}')
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Privileged:</span> 
+                  <span class="$(if [ \"$allow_priv\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_priv</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Host Network:</span> 
+                  <span class="$(if [ \"$allow_host_net\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_net</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Host Ports:</span> 
+                  <span class="$(if [ \"$allow_host_ports\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_ports</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Host PID:</span> 
+                  <span class="$(if [ \"$allow_host_pid\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_pid</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Host IPC:</span> 
+                  <span class="$(if [ \"$allow_host_ipc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_host_ipc</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Allow Privilege Escalation:</span> 
+                  <span class="$(if [ \"$allow_priv_esc\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$allow_priv_esc</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Read-Only Root Filesystem:</span> 
+                  <span class="$(if [ \"$read_only_root\" == \"true\" ]; then echo \"true\"; else echo \"false\"; fi)">$read_only_root</span>
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">Run As User Strategy:</span> $run_as_user
+              </div>
+              <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px;">
+                  <span style="font-weight: bold;">SELinux Context Strategy:</span> $selinux_context
+              </div>
+          </div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+              <div>
+                  <h4>Assigned Users</h4>
+                  <ul style="background-color: #f9fbff; border-radius: 4px; padding: 10px;">
+EOF
+      
       if [ -z "$users" ]; then
         echo "<li>None</li>" >> "$report_file"
       else
@@ -655,10 +835,15 @@ EOF
           echo "<li>$user</li>" >> "$report_file"
         done
       fi
-      echo "</ul>" >> "$report_file"
       
-      echo "<h4>Groups:</h4>" >> "$report_file"
-      echo "<ul>" >> "$report_file"
+      cat << EOF >> "$report_file"
+                  </ul>
+              </div>
+              <div>
+                  <h4>Assigned Groups</h4>
+                  <ul style="background-color: #f9fbff; border-radius: 4px; padding: 10px;">
+EOF
+      
       if [ -z "$groups" ]; then
         echo "<li>None</li>" >> "$report_file"
       else
@@ -666,22 +851,30 @@ EOF
           echo "<li>$group</li>" >> "$report_file"
         done
       fi
-      echo "</ul>" >> "$report_file"
+      
+      echo "                  </ul>" >> "$report_file"
+      echo "              </div>" >> "$report_file"
+      echo "          </div>" >> "$report_file"
+      echo "      </div>" >> "$report_file"
     done
     
     # Add recommendations section
     cat << EOF >> "$report_file"
-    <h2>Recommendations</h2>
+    <h2 class="section-title">Recommendations</h2>
     
-    <h3>Principle of Least Privilege</h3>
-    <ul>
-      <li>Review all service accounts with access to privileged SCCs</li>
-      <li>Remove unnecessary SCC assignments</li>
-      <li>Create custom SCCs that grant only the specific privileges required by applications</li>
-    </ul>
-    
-    <h3>Security Risks to Address</h3>
-    <ul>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 25px; margin-top: 25px;">
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">Principle of Least Privilege</h3>
+            <ul style="padding-left: 0;">
+                <li>Review all service accounts with access to privileged SCCs</li>
+                <li>Remove unnecessary SCC assignments</li>
+                <li>Create custom SCCs that grant only the specific privileges required by applications</li>
+            </ul>
+        </div>
+        
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">Security Risks to Address</h3>
+            <ul style="padding-left: 0;">
 EOF
     
     # Check for common security issues
@@ -695,7 +888,14 @@ EOF
     
     # Close HTML
     cat << EOF >> "$report_file"
-    </ul>
+            </ul>
+        </div>
+    </div>
+    
+    <div style="margin-top: 40px; text-align: center; color: #777; font-size: 0.9em; padding: 20px 0; border-top: 1px solid #eee;">
+        <p>Generated with OpenShift SCC Audit Tool v${VERSION}</p>
+    </div>
+</div>
 </body>
 </html>
 EOF
@@ -1193,20 +1393,28 @@ container_security_report() {
     </style>
 </head>
 <body>
-    <h1>OpenShift Container Security Posture Report</h1>
-    <p class="timestamp">Generated: $(date)</p>
-    <p>Cluster: $(oc whoami --show-server)</p>
-    <p>User: $(oc whoami)</p>
+<div class="container">
+    <header>
+        <h1>OpenShift Container Security Posture Report</h1>
+        <div class="cluster-info">
+            <p>Generated: $(date)</p>
+            <p>Cluster: $(oc whoami --show-server)</p>
+            <p>User: $(oc whoami)</p>
+        </div>
+    </header>
     
-    <h2>Overview</h2>
-    <p>This report provides a comprehensive analysis of the security posture of your OpenShift cluster
-    with a focus on Security Context Constraints (SCCs) and container security configurations.</p>
+    <h2 class="section-title">Overview</h2>
+    <div class="summary-box">
+        <p>This report provides a comprehensive analysis of the security posture of your OpenShift cluster
+        with a focus on Security Context Constraints (SCCs) and container security configurations.</p>
+    </div>
     
-    <h2>Summary</h2>
+    <h2 class="section-title">Summary</h2>
+    <div class="summary-box">
 EOF
     
     # Add summary information
-    echo "<p>Total SCCs: $(oc get scc -o name | wc -l)</p>" >> "$report_file"
+    echo "<p>Total SCCs: <strong>$(oc get scc -o name | wc -l)</strong></p>" >> "$report_file"
     
     # Count high-risk SCCs
     local high_risk_count=0
@@ -1221,11 +1429,12 @@ EOF
         high_risk_count=$((high_risk_count+1))
       fi
     done
-    echo "<p>High-Risk SCCs: $high_risk_count</p>" >> "$report_file"
+    echo "<p>High-Risk SCCs: <strong class=\"risk-high\">$high_risk_count</strong></p>" >> "$report_file"
+    echo "</div>" >> "$report_file"
     
     # Add section for privileged SCCs
     cat << EOF >> "$report_file"
-    <h2>Privileged Access Analysis</h2>
+    <h2 class="section-title">Privileged Access Analysis</h2>
     <p>The following SCCs allow privileged operations:</p>
 EOF
     
@@ -1360,31 +1569,44 @@ EOF
     
     # Add security recommendations
     cat << EOF >> "$report_file"
-    <h2>Security Recommendations</h2>
+    <h2 class="section-title">Security Recommendations</h2>
     
-    <h3>High Priority</h3>
-    <ol>
-        <li><strong>Restrict Privileged Access</strong>: Review all SCCs that allow privileged access and limit them to only essential service accounts.</li>
-        <li><strong>Minimize Host Access</strong>: Container workloads should not require host network, PID, or IPC access in most cases.</li>
-        <li><strong>Restrict Host Path Volumes</strong>: Avoid allowing hostPath volumes which provide direct access to the host filesystem.</li>
-    </ol>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 25px; margin-top: 25px;">
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">High Priority</h3>
+            <ol style="padding-left: 20px;">
+                <li><strong>Restrict Privileged Access</strong>: Review all SCCs that allow privileged access and limit them to only essential service accounts.</li>
+                <li><strong>Minimize Host Access</strong>: Container workloads should not require host network, PID, or IPC access in most cases.</li>
+                <li><strong>Restrict Host Path Volumes</strong>: Avoid allowing hostPath volumes which provide direct access to the host filesystem.</li>
+            </ol>
+        </div>
+        
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">Medium Priority</h3>
+            <ol style="padding-left: 20px;">
+                <li><strong>Limit Linux Capabilities</strong>: Only grant the specific capabilities required for workloads to function.</li>
+                <li><strong>Implement SELinux Policies</strong>: Use MustRunAs rather than RunAsAny for SELinux context where possible.</li>
+                <li><strong>Restrict Volume Types</strong>: Only allow volume types that are required for your applications.</li>
+            </ol>
+        </div>
+        
+        <div style="background-color: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.05); padding: 20px;">
+            <h3 style="color: #151c39; margin-top: 0;">Best Practices</h3>
+            <ol style="padding-left: 20px;">
+                <li><strong>Create Custom SCCs</strong>: Rather than using privileged or anyuid SCCs, create custom SCCs with only the permissions needed.</li>
+                <li><strong>Regular Auditing</strong>: Run this security audit tool regularly to monitor for changes in SCC assignments.</li>
+                <li><strong>Namespace Isolation</strong>: Use network policies to isolate namespaces and restrict communication between pods.</li>
+                <li><strong>Use Admission Controllers</strong>: Implement admission controllers to enforce security policies.</li>
+            </ol>
+        </div>
+    </div>
     
-    <h3>Medium Priority</h3>
-    <ol>
-        <li><strong>Limit Linux Capabilities</strong>: Only grant the specific capabilities required for workloads to function.</li>
-        <li><strong>Implement SELinux Policies</strong>: Use MustRunAs rather than RunAsAny for SELinux context where possible.</li>
-        <li><strong>Restrict Volume Types</strong>: Only allow volume types that are required for your applications.</li>
-    </ol>
-    
-    <h3>Best Practices</h3>
-    <ol>
-        <li><strong>Create Custom SCCs</strong>: Rather than using privileged or anyuid SCCs, create custom SCCs with only the permissions needed.</li>
-        <li><strong>Regular Auditing</strong>: Run this security audit tool regularly to monitor for changes in SCC assignments.</li>
-        <li><strong>Namespace Isolation</strong>: Use network policies to isolate namespaces and restrict communication between pods.</li>
-        <li><strong>Use Admission Controllers</strong>: Implement admission controllers to enforce security policies.</li>
-    </ol>
-    </body>
-    </html>
+    <div style="margin-top: 40px; text-align: center; color: #777; font-size: 0.9em; padding: 20px 0; border-top: 1px solid #eee;">
+        <p>Generated with OpenShift Container Security Tool v${VERSION}</p>
+    </div>
+</div>
+</body>
+</html>
 EOF
   
   else
