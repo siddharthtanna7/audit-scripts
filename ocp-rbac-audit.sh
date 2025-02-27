@@ -4,6 +4,7 @@
 # A tool for security engineers to audit roles and role bindings for prohibited permissions
 
 set -e
+set -u
 
 VERSION="1.0.0"
 SCRIPT_NAME=$(basename "$0")
@@ -158,7 +159,7 @@ is_prohibited() {
     
     # Check if resource matches (direct or wildcard)
     if [[ "$prohibited_resource" == "*" || "$prohibited_resource" == "$resource" || 
-          "$prohibited_resource" == */* && "${prohibited_resource%/*}" == "${resource%/*}" && "${prohibited_resource#*/}" == "*" ]]; then
+          "$prohibited_resource" == "*/*" && "${prohibited_resource%/*}" == "${resource%/*}" && "${prohibited_resource#*/}" == "*" ]]; then
       
       # Check if verb matches (direct or in comma-separated list or wildcard)
       if [[ "$prohibited_verbs" == "*" ]]; then
@@ -242,7 +243,7 @@ get_all_subjects() {
   local ns_option=""
   
   if [ -n "$namespace" ] && [ "$namespace" != "all" ]; then
-    ns_option="-n $namespace"
+    ns_option="-n \"$namespace\""
   else
     ns_option="--all-namespaces"
   fi
@@ -262,10 +263,10 @@ get_all_subjects() {
     {
       kind: .kind,
       name: .metadata.name,
-      namespace: .metadata.namespace // "cluster-wide",
+      namespace: (.metadata.namespace // "cluster-wide"),
       roleName: .roleRef.name,
       roleKind: .roleRef.kind,
-      subjects: .subjects // []
+      subjects: (.subjects // [])
     } | 
     if .subjects | length > 0 then
       .subjects[] as $subject | 
@@ -277,7 +278,7 @@ get_all_subjects() {
         roleName: .roleName,
         subjectKind: $subject.kind,
         subjectName: $subject.name,
-        subjectNamespace: $subject.namespace // "default"
+        subjectNamespace: ($subject.namespace // "default")
       }
     else
       empty
@@ -300,7 +301,7 @@ get_role_permissions() {
   fi
   
   # Extract rules from the role
-  echo "$role_json" | jq -r '.rules // []'
+  echo "$role_json" | jq -r '(.rules // [])'
 }
 
 # Function to verify if a role has prohibited permissions
@@ -315,15 +316,15 @@ check_role_for_prohibited() {
   # Get role permissions
   local role_rules=$(get_role_permissions "$role_kind" "$role_name" "$namespace")
   
-  # For each rule in the role
-  echo "$role_rules" | jq -c '.[]' | while read -r rule; do
-    local apiGroups=$(echo "$rule" | jq -r '.apiGroups // [""]')
-    local resources=$(echo "$rule" | jq -r '.resources // []')
-    local verbs=$(echo "$rule" | jq -r '.verbs // []')
+  # For each rule in the role - using process substitution to avoid subshell issues
+  while read -r rule; do
+    local apiGroups=$(echo "$rule" | jq -r '(.apiGroups // [""])')
+    local resources=$(echo "$rule" | jq -r '(.resources // [])')
+    local verbs=$(echo "$rule" | jq -r '(.verbs // [])')
     
     # Check each combination of API group, resource, and verb
-    echo "$apiGroups" | jq -r '.[]' | while read -r apiGroup; do
-      echo "$resources" | jq -r '.[]' | while read -r resource; do
+    while read -r apiGroup; do
+      while read -r resource; do
         # Combine API group and resource correctly
         local full_resource
         if [ "$apiGroup" == "" ]; then
@@ -332,15 +333,15 @@ check_role_for_prohibited() {
           full_resource="${apiGroup}/${resource}"
         fi
         
-        echo "$verbs" | jq -r '.[]' | while read -r verb; do
+        while read -r verb; do
           if is_prohibited "$full_resource" "$verb"; then
             prohibited_found=1
             prohibited_details="${prohibited_details}${full_resource}:${verb}\n"
           fi
-        done
-      done
-    done
-  done
+        done < <(echo "$verbs" | jq -r '.[]')
+      done < <(echo "$resources" | jq -r '.[]')
+    done < <(echo "$apiGroups" | jq -r '.[]')
+  done < <(echo "$role_rules" | jq -c '.[]')
   
   if [ $prohibited_found -eq 1 ]; then
     echo -e "$prohibited_details"
@@ -380,7 +381,7 @@ check_subject() {
   echo "BINDING_KIND\tBINDING_NAME\tBINDING_NAMESPACE\tROLE_KIND\tROLE_NAME\tPROHIBITED_PERMISSIONS"
   
   # Check each role
-  echo "$subject_roles" | while read -r role_entry; do
+  while read -r role_entry; do
     local binding_kind=$(echo "$role_entry" | jq -r '.bindingKind')
     local binding_name=$(echo "$role_entry" | jq -r '.bindingName')
     local binding_namespace=$(echo "$role_entry" | jq -r '.bindingNamespace')
@@ -394,7 +395,7 @@ check_subject() {
     elif [ "$VERBOSE" == "true" ]; then
       echo "$binding_kind\t$binding_name\t$binding_namespace\t$role_kind\t$role_name\tNone"
     fi
-  done
+  done < <(echo "$subject_roles")
 }
 
 # Function to check a specific role for prohibited permissions
@@ -449,8 +450,17 @@ check_role() {
       jq -r --arg role "$role_name" '.items[] | select(.roleRef.name == $role and .roleRef.kind == "ClusterRole")')
     
     # Get role bindings to this cluster role
-    bindings+=$(oc get rolebinding --all-namespaces -o json | 
+    local rb_bindings
+    rb_bindings=$(oc get rolebinding --all-namespaces -o json | 
       jq -r --arg role "$role_name" '.items[] | select(.roleRef.name == $role and .roleRef.kind == "ClusterRole")')
+    if [ -n "$rb_bindings" ]; then
+      if [ -n "$bindings" ]; then
+        bindings="$bindings
+$rb_bindings"
+      else
+        bindings="$rb_bindings"
+      fi
+    fi
   else
     # Get role bindings to this role in the namespace
     bindings=$(oc get rolebinding -n "$namespace" -o json | 
@@ -492,7 +502,7 @@ check_namespace() {
   fi
   
   # Check each subject
-  for subject in $ns_subjects; do
+  while read -r subject; do
     local subject_type=$(echo "$subject" | cut -d':' -f1)
     local subject_name=$(echo "$subject" | cut -d':' -f2)
     
@@ -500,7 +510,7 @@ check_namespace() {
     echo "Subject: $subject_type:$subject_name"
     echo "----------------------------------------------------------"
     check_subject "$subject_type" "$subject_name" "$namespace"
-  done
+  done < <(echo "$ns_subjects")
 }
 
 # Function to list subjects with high-risk permissions
@@ -515,7 +525,7 @@ list_high_risk_subjects() {
   # Process each subject-role combination
   echo "SUBJECT_TYPE\tSUBJECT_NAME\tBINDING_KIND\tBINDING_NAME\tBINDING_NAMESPACE\tROLE_KIND\tROLE_NAME\tPROHIBITED_PERMISSIONS"
   
-  echo "$all_subjects" | while read -r subject_entry; do
+  while read -r subject_entry; do
     local subject_kind=$(echo "$subject_entry" | jq -r '.subjectKind')
     local subject_name=$(echo "$subject_entry" | jq -r '.subjectName')
     local binding_kind=$(echo "$subject_entry" | jq -r '.bindingKind')
@@ -529,7 +539,7 @@ list_high_risk_subjects() {
     if [ -n "$prohibited_perms" ]; then
       echo "$subject_kind\t$subject_name\t$binding_kind\t$binding_name\t$binding_namespace\t$role_kind\t$role_name\t$prohibited_perms"
     fi
-  done
+  done < <(echo "$all_subjects")
 }
 
 # Function to list all roles and cluster roles
@@ -550,7 +560,7 @@ list_roles() {
   if [ "$namespace" == "all" ] || [ -z "$namespace" ]; then
     echo "NAMESPACE\tNAME\tTYPE"
     echo "cluster-wide\t$(oc get clusterroles -o name | wc -l)\tClusterRole"
-    oc get namespace -o name | cut -d'/' -f2 | while read ns; do
+    oc get namespace -o name | cut -d'/' -f2 | while read -r ns; do
       local role_count=$(oc get roles -n "$ns" -o name 2>/dev/null | wc -l)
       if [ "$role_count" -gt 0 ]; then
         echo "$ns\t$role_count\tRole"
@@ -584,7 +594,7 @@ list_bindings() {
   if [ "$namespace" == "all" ] || [ -z "$namespace" ]; then
     echo "NAMESPACE\tNAME\tTYPE"
     echo "cluster-wide\t$(oc get clusterrolebindings -o name | wc -l)\tClusterRoleBinding"
-    oc get namespace -o name | cut -d'/' -f2 | while read ns; do
+    oc get namespace -o name | cut -d'/' -f2 | while read -r ns; do
       local binding_count=$(oc get rolebindings -n "$ns" -o name 2>/dev/null | wc -l)
       if [ "$binding_count" -gt 0 ]; then
         echo "$ns\t$binding_count\tRoleBinding"
@@ -612,7 +622,7 @@ audit_all_subjects() {
   # Process each subject and their roles
   echo "SUBJECT_TYPE\tSUBJECT_NAME\tBINDING_NAMESPACE\tROLE_KIND\tROLE_NAME\tPROHIBITED_PERMISSION"
   
-  echo "$all_subjects" | while read -r subject_entry; do
+  while read -r subject_entry; do
     local subject_kind=$(echo "$subject_entry" | jq -r '.subjectKind')
     local subject_name=$(echo "$subject_entry" | jq -r '.subjectName')
     local binding_namespace=$(echo "$subject_entry" | jq -r '.bindingNamespace')
@@ -632,13 +642,13 @@ audit_all_subjects() {
     local prohibited_perms=$(check_role_for_prohibited "$role_kind" "$role_name" "$binding_namespace")
     
     if [ -n "$prohibited_perms" ]; then
-      echo -e "$prohibited_perms" | while read -r perm; do
+      while read -r perm; do
         if [ -n "$perm" ]; then
           echo "$subject_kind\t$subject_name\t$binding_namespace\t$role_kind\t$role_name\t$perm"
         fi
-      done
+      done < <(echo -e "$prohibited_perms")
     fi
-  done
+  done < <(echo "$all_subjects")
 }
 
 # Parse command line arguments
@@ -773,7 +783,7 @@ main() {
       list_prohibited_permissions
       ;;
     check-subject)
-      local subject_parts=(${SUBJECT_NAME//:/ })
+      local subject_parts=("${SUBJECT_NAME//:/ }")
       if [ ${#subject_parts[@]} -ne 2 ]; then
         echo "Error: Subject must be in format 'Type:Name'"
         echo "Example: User:admin or ServiceAccount:default"
