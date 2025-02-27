@@ -1,0 +1,933 @@
+#!/bin/bash
+
+# ocp-scc-audit.sh - OpenShift SCC Auditing Tool
+# A tool for security engineers to audit Security Context Constraints in OpenShift clusters
+
+set -e
+
+VERSION="1.0.0"
+SCRIPT_NAME=$(basename "$0")
+
+# No colors - simple output
+
+# Function to display usage information
+show_usage() {
+  cat << EOF
+OpenShift SCC Audit Tool v${VERSION}
+A tool for security engineers to audit Security Context Constraints in OpenShift clusters
+
+Usage:
+  ${SCRIPT_NAME} [command] [options]
+
+Commands:
+  list-sccs                      List all SCCs in the cluster
+  check-scc [scc_name]           Show details for a specific SCC
+  find-subjects [scc_name]       Find all users, service accounts, and groups using a specific SCC
+  high-risk                      List all subjects with high-risk SCCs (privileged, anyuid, hostnetwork, etc.)
+  unused                         Find SCCs not assigned to any subjects
+  compare [scc1] [scc2]          Compare two SCCs and show differences
+  report                         Generate a comprehensive SCC audit report
+  sensitive-caps                 Find subjects with SCCs allowing sensitive Linux capabilities
+  sensitive-volumes              Find subjects with SCCs allowing sensitive volume types
+  sensitive-seccomp              Find subjects with unconfined seccomp profiles
+  sensitive-selinux              Find subjects with SCCs having permissive SELinux contexts
+  container-security-report      Generate a comprehensive container security posture report
+  help                           Show this help message
+
+Options:
+  -o, --output [format]          Output format: table (default), json, yaml
+  -n, --namespace [namespace]    Filter by namespace
+  -c, --capability [capability]  Filter by specific Linux capability (for sensitive-caps)
+  -h, --help                     Show this help message
+  -v, --version                  Show version information
+
+Examples:
+  ${SCRIPT_NAME} list-sccs
+  ${SCRIPT_NAME} check-scc privileged
+  ${SCRIPT_NAME} find-subjects anyuid --namespace app-prod
+  ${SCRIPT_NAME} high-risk --output json
+  ${SCRIPT_NAME} sensitive-caps --capability SYS_ADMIN
+  ${SCRIPT_NAME} container-security-report
+  ${SCRIPT_NAME} report
+
+EOF
+}
+
+# Function to check if oc is installed and user is logged in
+check_prereqs() {
+  if ! command -v oc &> /dev/null; then
+    echo "Error: 'oc' command not found."
+    echo "Please install the OpenShift CLI: https://docs.openshift.com/container-platform/latest/cli_reference/openshift_cli/getting-started-cli.html"
+    exit 1
+  fi
+
+  if ! oc whoami &> /dev/null; then
+    echo "Error: Not logged into OpenShift."
+    echo "Please login using 'oc login' before using this tool."
+    exit 1
+  fi
+}
+
+# Function to format output according to desired format
+format_output() {
+  local data="$1"
+  local format="${OUTPUT_FORMAT:-table}"
+  
+  case "$format" in
+    json)
+      echo "$data" | jq -r '.'
+      ;;
+    yaml)
+      echo "$data" | yq -P
+      ;;
+    table|*)
+      # Default to table format (using column if available)
+      if command -v column &> /dev/null; then
+        echo "$data" | column -t -s $'\t'
+      else
+        echo "$data"
+      fi
+      ;;
+  esac
+}
+
+# Function to list all SCCs
+list_sccs() {
+  echo "Listing all Security Context Constraints in the cluster..."
+  
+  if [ "$OUTPUT_FORMAT" == "json" ]; then
+    oc get scc -o json
+  elif [ "$OUTPUT_FORMAT" == "yaml" ]; then
+    oc get scc -o yaml
+  else
+    echo "NAME\tPRIORITY\tUSERS\tGROUPS\tALLOW PRIVILEGED\tALLOW PRIVILEGED ESCALATION\tALLOW HOST NETWORK\tALLOW HOST PORTS"
+    oc get scc -o custom-columns=NAME:.metadata.name,PRIORITY:.priority,USERS:.users,GROUPS:.groups,ALLOW_PRIVILEGED:.allowPrivilegedContainer,ALLOW_PRIV_ESCALATION:.allowPrivilegeEscalation,ALLOW_HOST_NETWORK:.allowHostNetwork,ALLOW_HOST_PORTS:.allowHostPorts | tail -n +2
+  fi
+}
+
+# Function to check details of a specific SCC
+check_scc() {
+  local scc_name="$1"
+  
+  if [ -z "$scc_name" ]; then
+    echo "Error: SCC name is required."
+    echo "Usage: ${SCRIPT_NAME} check-scc [scc_name]"
+    exit 1
+  fi
+  
+  echo "Checking details for SCC: ${scc_name}"
+  
+  if ! oc get scc "$scc_name" &> /dev/null; then
+    echo "Error: SCC '${scc_name}' not found."
+    exit 1
+  fi
+  
+  oc get scc "$scc_name" -o "${OUTPUT_FORMAT:-yaml}"
+}
+
+# Function to find all subjects using a specific SCC
+find_subjects() {
+  local scc_name="$1"
+  
+  if [ -z "$scc_name" ]; then
+    echo "Error: SCC name is required."
+    echo "Usage: ${SCRIPT_NAME} find-subjects [scc_name]"
+    exit 1
+  fi
+  
+  echo "Finding all subjects using SCC: ${scc_name}"
+  
+  if ! oc get scc "$scc_name" &> /dev/null; then
+    echo "Error: SCC '${scc_name}' not found."
+    exit 1
+  fi
+  
+  # Get direct assignments from the SCC
+  local users=$(oc get scc "$scc_name" -o jsonpath='{.users}')
+  local groups=$(oc get scc "$scc_name" -o jsonpath='{.groups}')
+  
+  # Format and display the results
+  echo "Directly assigned Users:"
+  if [ "$users" == "[]" ] || [ -z "$users" ]; then
+    echo "  None"
+  else
+    echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+  fi
+  
+  echo "Directly assigned Groups:"
+  if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+    echo "  None"
+  else
+    echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+  fi
+  
+  # Check if namespace is specified to filter service accounts
+  if [ -n "$NAMESPACE" ]; then
+    echo "Service Accounts in namespace ${NAMESPACE} using this SCC:"
+    local sa_list=""
+    
+    # Get service accounts in specified namespace
+    for sa in $(oc get sa -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}'); do
+      local sa_full="system:serviceaccount:${NAMESPACE}:${sa}"
+      
+      # Check if service account is directly assigned
+      if echo "$users" | grep -q "$sa_full"; then
+        sa_list="${sa_list}  ${sa} (direct assignment)\n"
+      fi
+      
+      # Check if service account belongs to a group that's assigned
+      for group in $(echo "$groups" | tr -d '[]"' | tr ',' ' '); do
+        if oc get rolebindings,clusterrolebindings -o json | jq -r '.items[] | select(.subjects[] | select(.kind=="ServiceAccount" and .name=="'"$sa"'" and .namespace=="'"$NAMESPACE"'")) | .roleRef.name' | grep -q "$group"; then
+          sa_list="${sa_list}  ${sa} (via group ${group})\n"
+          break
+        fi
+      done
+    done
+    
+    if [ -z "$sa_list" ]; then
+      echo "  None"
+    else
+      echo -e "$sa_list" | sort | uniq
+    fi
+  else
+    echo "Specify --namespace to see service accounts using this SCC"
+  fi
+}
+
+# Function to find subjects with high-risk SCCs
+high_risk() {
+  echo "Finding subjects with high-risk SCCs..."
+  
+  # List of high-risk SCCs
+  local high_risk_sccs=("privileged" "anyuid" "hostaccess" "hostnetwork" "hostmount-anyuid" "hostpath")
+  
+  echo "High-Risk SCCs: ${high_risk_sccs[*]}"
+  echo
+  
+  for scc in "${high_risk_sccs[@]}"; do
+    if oc get scc "$scc" &> /dev/null; then
+      echo "=== Subjects with access to SCC: $scc ==="
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+    fi
+  done
+}
+
+# Function to find unused SCCs
+unused() {
+  echo "Finding unused SCCs..."
+  
+  local unused_sccs=""
+  
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+    local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+    
+    if ([ "$users" == "[]" ] || [ -z "$users" ]) && ([ "$groups" == "[]" ] || [ -z "$groups" ]); then
+      unused_sccs="${unused_sccs}${scc}\n"
+    fi
+  done
+  
+  echo "Unused SCCs (no direct user or group assignments):"
+  if [ -z "$unused_sccs" ]; then
+    echo "  None"
+  else
+    echo -e "$unused_sccs" | sed 's/^ */  /'
+  fi
+}
+
+# Function to compare two SCCs
+compare() {
+  local scc1="$1"
+  local scc2="$2"
+  
+  if [ -z "$scc1" ] || [ -z "$scc2" ]; then
+    echo "Error: Two SCC names are required."
+    echo "Usage: ${SCRIPT_NAME} compare [scc1] [scc2]"
+    exit 1
+  fi
+  
+  echo "Comparing SCCs: ${scc1} vs ${scc2}"
+  
+  if ! oc get scc "$scc1" &> /dev/null; then
+    echo "Error: SCC '${scc1}' not found."
+    exit 1
+  fi
+  
+  if ! oc get scc "$scc2" &> /dev/null; then
+    echo "Error: SCC '${scc2}' not found."
+    exit 1
+  fi
+  
+  # Extract SCCs to temporary files for comparison
+  local temp_dir=$(mktemp -d)
+  oc get scc "$scc1" -o yaml > "$temp_dir/$scc1.yaml"
+  oc get scc "$scc2" -o yaml > "$temp_dir/$scc2.yaml"
+  
+  # Use diff to compare the files
+  echo "Differences:"
+  # Always fall back to regular diff to avoid color output
+  diff -y --suppress-common-lines "$temp_dir/$scc1.yaml" "$temp_dir/$scc2.yaml" | grep -v "metadata\|creationTimestamp\|resourceVersion\|uid\|generation"
+  
+  # Clean up temporary files
+  rm -rf "$temp_dir"
+}
+
+# Function to generate a comprehensive report
+generate_report() {
+  local report_file="ocp-scc-audit-report-$(date +%Y%m%d-%H%M%S).md"
+  
+  echo "Generating comprehensive SCC audit report: ${report_file}"
+  
+  # Create report header
+  cat << EOF > "$report_file"
+# OpenShift Security Context Constraints Audit Report
+Generated: $(date)
+Cluster: $(oc whoami --show-server)
+User: $(oc whoami)
+
+## Summary
+EOF
+  
+  # Add summary information
+  echo -e "Total SCCs: $(oc get scc -o name | wc -l)" >> "$report_file"
+  echo -e "Custom SCCs: $(oc get scc --no-headers | grep -v -E '^restricted|^nonroot|^hostmount-anyuid|^anyuid|^hostnetwork|^hostaccess|^privileged' | wc -l)" >> "$report_file"
+  
+  # Add high-risk SCCs section
+  cat << EOF >> "$report_file"
+
+## High-Risk SCCs
+The following SCCs grant elevated privileges and should be carefully audited:
+EOF
+  
+  local high_risk_sccs=("privileged" "anyuid" "hostaccess" "hostnetwork" "hostmount-anyuid" "hostpath")
+  
+  for scc in "${high_risk_sccs[@]}"; do
+    if oc get scc "$scc" &> /dev/null; then
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')
+      
+      echo -e "### $scc" >> "$report_file"
+      echo -e "- Priority: $(oc get scc "$scc" -o jsonpath='{.priority}')" >> "$report_file"
+      echo -e "- Allow Privileged: $(oc get scc "$scc" -o jsonpath='{.allowPrivilegedContainer}')" >> "$report_file"
+      echo -e "- Allow Host Network: $(oc get scc "$scc" -o jsonpath='{.allowHostNetwork}')" >> "$report_file"
+      echo -e "- Allow Host Ports: $(oc get scc "$scc" -o jsonpath='{.allowHostPorts}')" >> "$report_file"
+      echo -e "- Allow Host PID: $(oc get scc "$scc" -o jsonpath='{.allowHostPID}')" >> "$report_file"
+      echo -e "- Allow Host IPC: $(oc get scc "$scc" -o jsonpath='{.allowHostIPC}')" >> "$report_file"
+      echo -e "- Allow Privilege Escalation: $(oc get scc "$scc" -o jsonpath='{.allowPrivilegeEscalation}')" >> "$report_file"
+      
+      echo -e "\n**Assigned Users:**" >> "$report_file"
+      if [ -z "$users" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$users" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n**Assigned Groups:**" >> "$report_file"
+      if [ -z "$groups" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$groups" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n" >> "$report_file"
+    fi
+  done
+  
+  # Add custom SCCs section
+  cat << EOF >> "$report_file"
+## Custom SCCs
+The following custom SCCs have been defined in the cluster:
+EOF
+  
+  for scc in $(oc get scc --no-headers | grep -v -E '^restricted|^nonroot|^hostmount-anyuid|^anyuid|^hostnetwork|^hostaccess|^privileged' | awk '{print $1}'); do
+    echo -e "### $scc" >> "$report_file"
+    echo -e "- Priority: $(oc get scc "$scc" -o jsonpath='{.priority}')" >> "$report_file"
+    echo -e "- Allow Privileged: $(oc get scc "$scc" -o jsonpath='{.allowPrivilegedContainer}')" >> "$report_file"
+    echo -e "- Allow Host Network: $(oc get scc "$scc" -o jsonpath='{.allowHostNetwork}')" >> "$report_file"
+    echo -e "- Users: $(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')" >> "$report_file"
+    echo -e "- Groups: $(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')" >> "$report_file"
+    echo -e "\n" >> "$report_file"
+  done
+  
+  # Add recommendations section
+  cat << EOF >> "$report_file"
+## Recommendations
+
+### Principle of Least Privilege
+- Review all service accounts with access to privileged SCCs
+- Remove unnecessary SCC assignments
+- Create custom SCCs that grant only the specific privileges required by applications
+
+### Security Risks to Address
+EOF
+  
+  # Check for common security issues
+  if oc get scc privileged -o json | jq -r '.users | length' | grep -q '[1-9]'; then
+    echo -e "- **HIGH RISK**: Users have direct access to the 'privileged' SCC" >> "$report_file"
+  fi
+  
+  if oc get scc anyuid -o json | jq -r '.users | length' | grep -q '[1-9]'; then
+    echo -e "- **MEDIUM RISK**: Users have direct access to the 'anyuid' SCC" >> "$report_file"
+  fi
+  
+  # Finalize report
+  echo -e "Report generated: ${report_file}"
+}
+
+# Parse command line arguments
+parse_args() {
+  COMMAND=""
+  SCC_NAME1=""
+  SCC_NAME2=""
+  OUTPUT_FORMAT="table"
+  NAMESPACE=""
+  CAPABILITY=""
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      list-sccs|check-scc|find-subjects|high-risk|unused|compare|report|sensitive-caps|sensitive-volumes|sensitive-seccomp|sensitive-selinux|container-security-report|help)
+        COMMAND="$1"
+        shift
+        ;;
+      -o|--output)
+        if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+          echo "Error: Missing argument for $1"
+          exit 1
+        fi
+        OUTPUT_FORMAT="$2"
+        shift 2
+        ;;
+      -n|--namespace)
+        if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+          echo "Error: Missing argument for $1"
+          exit 1
+        fi
+        NAMESPACE="$2"
+        shift 2
+        ;;
+      -c|--capability)
+        if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+          echo "Error: Missing argument for $1"
+          exit 1
+        fi
+        CAPABILITY="$2"
+        shift 2
+        ;;
+      -h|--help)
+        show_usage
+        exit 0
+        ;;
+      -v|--version)
+        echo "OpenShift SCC Audit Tool v${VERSION}"
+        exit 0
+        ;;
+      *)
+        if [ -z "$SCC_NAME1" ] && [ "$COMMAND" = "check-scc" -o "$COMMAND" = "find-subjects" ]; then
+          SCC_NAME1="$1"
+        elif [ -z "$SCC_NAME1" ] && [ "$COMMAND" = "compare" ]; then
+          SCC_NAME1="$1"
+        elif [ -z "$SCC_NAME2" ] && [ "$COMMAND" = "compare" ]; then
+          SCC_NAME2="$1"
+        else
+          echo "Error: Unknown argument: $1"
+          show_usage
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+  
+  # Validate that a command was provided
+  if [ -z "$COMMAND" ]; then
+    echo "Error: No command specified."
+    show_usage
+    exit 1
+  fi
+}
+
+# Function to find subjects with SCCs allowing sensitive Linux capabilities
+sensitive_caps() {
+  echo "Finding subjects with SCCs allowing sensitive Linux capabilities..."
+  
+  # List of sensitive capabilities if not specified
+  local sensitive_capabilities=("SYS_ADMIN" "NET_ADMIN" "SYS_PTRACE" "SYS_BOOT" "SYS_CHROOT" "SYS_MODULE" "SYS_RAWIO" "SYS_TIME" "SYS_TTY_CONFIG" "SETPCAP" "LINUX_IMMUTABLE" "NET_BROADCAST" "NET_RAW" "IPC_LOCK" "IPC_OWNER" "KILL" "LEASE" "WAKE_ALARM" "BLOCK_SUSPEND" "AUDIT_CONTROL" "SYSLOG" "DAC_READ_SEARCH" "DAC_OVERRIDE" "FOWNER" "MAC_OVERRIDE" "MAC_ADMIN")
+  
+  # If a specific capability is provided, just check that one
+  if [ -n "$CAPABILITY" ]; then
+    sensitive_capabilities=("$CAPABILITY")
+  fi
+  
+  echo "Checking for SCCs with the following sensitive capabilities:"
+  for cap in "${sensitive_capabilities[@]}"; do
+    echo "  - $cap"
+  done
+  echo ""
+  
+  # Iterate through all SCCs
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local allowed_caps=$(oc get scc "$scc" -o jsonpath='{.allowedCapabilities}')
+    local defaulted_caps=$(oc get scc "$scc" -o jsonpath='{.defaultAddCapabilities}')
+    
+    # Check for "ALL" in allowedCapabilities (highest risk)
+    if [[ "$allowed_caps" == *"ALL"* ]]; then
+      echo "SCC '$scc' allows ALL capabilities (extremely high risk)"
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+      continue
+    fi
+    
+    # Check for specific sensitive capabilities
+    local has_sensitive=false
+    local detected_caps=""
+    
+    for cap in "${sensitive_capabilities[@]}"; do
+      if [[ "$allowed_caps" == *"$cap"* ]] || [[ "$defaulted_caps" == *"$cap"* ]]; then
+        has_sensitive=true
+        detected_caps="${detected_caps}${cap} "
+      fi
+    done
+    
+    if [ "$has_sensitive" = true ]; then
+      echo "SCC '$scc' allows sensitive capabilities: ${detected_caps}"
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+    fi
+  done
+}
+
+# Function to find subjects with SCCs allowing sensitive volume types
+sensitive_volumes() {
+  echo "Finding subjects with SCCs allowing sensitive volume types..."
+  
+  # List of sensitive volume types
+  local sensitive_volumes=("hostPath" "configMap" "secret" "persistentVolumeClaim" "projected" "downwardAPI" "emptyDir" "gcePersistentDisk" "awsElasticBlockStore" "azureDisk" "azureFile" "cephFS" "cinder" "fc" "flexVolume" "flocker" "nfs" "glusterfs" "iscsi" "portworxVolume" "quobyte" "rbd" "scaleIO" "storageos" "vsphereVolume")
+  
+  # Iterate through all SCCs
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local allowed_volumes=$(oc get scc "$scc" -o jsonpath='{.volumes}')
+    
+    # Check for ALL volumes (highest risk)
+    if [[ "$allowed_volumes" == *"*"* ]] || [[ "$allowed_volumes" == *"ALL"* ]]; then
+      echo "SCC '$scc' allows ALL volume types (high risk)"
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+      continue
+    fi
+    
+    # Check for specific sensitive volume types
+    local sensitive_found=()
+    
+    for vol in "${sensitive_volumes[@]}"; do
+      if [[ "$allowed_volumes" == *"$vol"* ]]; then
+        sensitive_found+=("$vol")
+      fi
+    done
+    
+    if [ ${#sensitive_found[@]} -gt 0 ]; then
+      echo "SCC '$scc' allows sensitive volume types: ${sensitive_found[*]}"
+      
+      # Special highlight for hostPath volumes, but without color
+      if [[ "${sensitive_found[*]}" == *"hostPath"* ]]; then
+        echo "CRITICAL: hostPath volumes allow containers to access arbitrary host filesystem paths!"
+      fi
+      
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+    fi
+  done
+}
+
+# Function to find subjects with unconfined seccomp profiles
+sensitive_seccomp() {
+  echo "Finding subjects with SCCs allowing unconfined seccomp profiles..."
+  
+  # Iterate through all SCCs
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local seccomp_profile=$(oc get scc "$scc" -o jsonpath='{.seccompProfiles}' 2>/dev/null)
+    local annotations=$(oc get scc "$scc" -o jsonpath='{.metadata.annotations}' 2>/dev/null)
+    
+    # Check for unconfined seccomp profiles
+    if [[ "$seccomp_profile" == *"unconfined"* ]] || [[ "$annotations" == *"unconfined"* ]]; then
+      echo "SCC '$scc' allows unconfined seccomp profiles (high risk)"
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+    fi
+  done
+}
+
+# Function to find subjects with SCCs having permissive SELinux contexts
+sensitive_selinux() {
+  echo "Finding subjects with SCCs having permissive SELinux contexts..."
+  
+  # Iterate through all SCCs
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local selinux_context=$(oc get scc "$scc" -o jsonpath='{.seLinuxContext.type}' 2>/dev/null)
+    
+    # Check for permissive SELinux contexts
+    if [[ "$selinux_context" == "RunAsAny" ]]; then
+      echo "SCC '$scc' allows RunAsAny SELinux context (high risk)"
+      echo "Assigned to:"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}')
+      
+      echo "Users:"
+      if [ "$users" == "[]" ] || [ -z "$users" ]; then
+        echo "  None"
+      else
+        echo "$users" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      
+      echo "Groups:"
+      if [ "$groups" == "[]" ] || [ -z "$groups" ]; then
+        echo "  None"
+      else
+        echo "$groups" | tr -d '[]"' | tr ',' '\n' | sed 's/^ */  /'
+      fi
+      echo ""
+    fi
+  done
+}
+
+# Function to generate a comprehensive container security posture report
+container_security_report() {
+  local report_file="ocp-container-security-report-$(date +%Y%m%d-%H%M%S).md"
+  
+  echo "Generating comprehensive container security posture report: ${report_file}"
+  
+  # Create report header
+  cat << EOF > "$report_file"
+# OpenShift Container Security Posture Report
+Generated: $(date)
+Cluster: $(oc whoami --show-server)
+User: $(oc whoami)
+
+## Overview
+This report provides a comprehensive analysis of the security posture of your OpenShift cluster
+with a focus on Security Context Constraints (SCCs) and container security configurations.
+
+## Summary
+EOF
+  
+  # Add summary information
+  echo -e "- Total SCCs: $(oc get scc -o name | wc -l)" >> "$report_file"
+  
+  # Count high-risk SCCs
+  local high_risk_count=0
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local privileged=$(oc get scc "$scc" -o jsonpath='{.allowPrivilegedContainer}')
+    local host_network=$(oc get scc "$scc" -o jsonpath='{.allowHostNetwork}')
+    local host_pid=$(oc get scc "$scc" -o jsonpath='{.allowHostPID}')
+    local host_ipc=$(oc get scc "$scc" -o jsonpath='{.allowHostIPC}')
+    local volumes=$(oc get scc "$scc" -o jsonpath='{.volumes}')
+    
+    if [[ "$privileged" == "true" ]] || [[ "$host_network" == "true" ]] || [[ "$host_pid" == "true" ]] || [[ "$host_ipc" == "true" ]] || [[ "$volumes" == *"hostPath"* ]] || [[ "$volumes" == *"ALL"* ]]; then
+      high_risk_count=$((high_risk_count+1))
+    fi
+  done
+  echo -e "- High-Risk SCCs: $high_risk_count" >> "$report_file"
+  
+  # Add section for privileged SCCs
+  cat << EOF >> "$report_file"
+
+## Privileged Access Analysis
+The following SCCs allow privileged operations:
+EOF
+  
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local privileged=$(oc get scc "$scc" -o jsonpath='{.allowPrivilegedContainer}')
+    
+    if [[ "$privileged" == "true" ]]; then
+      echo -e "### SCC: $scc" >> "$report_file"
+      echo -e "- Priority: $(oc get scc "$scc" -o jsonpath='{.priority}')" >> "$report_file"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')
+      
+      echo -e "\n**Users:**" >> "$report_file"
+      if [ -z "$users" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$users" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n**Groups:**" >> "$report_file"
+      if [ -z "$groups" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$groups" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n" >> "$report_file"
+    fi
+  done
+  
+  # Add section for host access
+  cat << EOF >> "$report_file"
+## Host Access Analysis
+The following SCCs allow access to host resources:
+EOF
+  
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local host_network=$(oc get scc "$scc" -o jsonpath='{.allowHostNetwork}')
+    local host_pid=$(oc get scc "$scc" -o jsonpath='{.allowHostPID}')
+    local host_ipc=$(oc get scc "$scc" -o jsonpath='{.allowHostIPC}')
+    local volumes=$(oc get scc "$scc" -o jsonpath='{.volumes}')
+    
+    if [[ "$host_network" == "true" ]] || [[ "$host_pid" == "true" ]] || [[ "$host_ipc" == "true" ]] || [[ "$volumes" == *"hostPath"* ]]; then
+      echo -e "### SCC: $scc" >> "$report_file"
+      echo -e "- Host Network: $host_network" >> "$report_file"
+      echo -e "- Host PID: $host_pid" >> "$report_file"
+      echo -e "- Host IPC: $host_ipc" >> "$report_file"
+      echo -e "- Host Path Volumes: $(if [[ "$volumes" == *"hostPath"* ]]; then echo "Yes"; else echo "No"; fi)" >> "$report_file"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')
+      
+      echo -e "\n**Users:**" >> "$report_file"
+      if [ -z "$users" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$users" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n**Groups:**" >> "$report_file"
+      if [ -z "$groups" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$groups" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n" >> "$report_file"
+    fi
+  done
+  
+  # Add section for Linux capabilities
+  cat << EOF >> "$report_file"
+## Linux Capabilities Analysis
+The following SCCs allow sensitive Linux capabilities:
+EOF
+  
+  for scc in $(oc get scc -o jsonpath='{.items[*].metadata.name}'); do
+    local allowed_caps=$(oc get scc "$scc" -o jsonpath='{.allowedCapabilities}')
+    local default_caps=$(oc get scc "$scc" -o jsonpath='{.defaultAddCapabilities}')
+    
+    if [[ "$allowed_caps" != "[]" ]] && [[ ! -z "$allowed_caps" ]]; then
+      echo -e "### SCC: $scc" >> "$report_file"
+      echo -e "- Allowed Capabilities: $allowed_caps" >> "$report_file"
+      echo -e "- Default Add Capabilities: $default_caps" >> "$report_file"
+      
+      local users=$(oc get scc "$scc" -o jsonpath='{.users}' | tr -d '[]"')
+      local groups=$(oc get scc "$scc" -o jsonpath='{.groups}' | tr -d '[]"')
+      
+      echo -e "\n**Users:**" >> "$report_file"
+      if [ -z "$users" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$users" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n**Groups:**" >> "$report_file"
+      if [ -z "$groups" ]; then
+        echo -e "- None" >> "$report_file"
+      else
+        echo "$groups" | tr ',' '\n' | sed 's/^/- /' >> "$report_file"
+      fi
+      
+      echo -e "\n" >> "$report_file"
+    fi
+  done
+  
+  # Add security recommendations
+  cat << EOF >> "$report_file"
+## Security Recommendations
+
+### High Priority
+1. **Restrict Privileged Access**: Review all SCCs that allow privileged access and limit them to only essential service accounts.
+2. **Minimize Host Access**: Container workloads should not require host network, PID, or IPC access in most cases.
+3. **Restrict Host Path Volumes**: Avoid allowing hostPath volumes which provide direct access to the host filesystem.
+
+### Medium Priority
+1. **Limit Linux Capabilities**: Only grant the specific capabilities required for workloads to function.
+2. **Implement SELinux Policies**: Use MustRunAs rather than RunAsAny for SELinux context where possible.
+3. **Restrict Volume Types**: Only allow volume types that are required for your applications.
+
+### Best Practices
+1. **Create Custom SCCs**: Rather than using privileged or anyuid SCCs, create custom SCCs with only the permissions needed.
+2. **Regular Auditing**: Run this security audit tool regularly to monitor for changes in SCC assignments.
+3. **Namespace Isolation**: Use network policies to isolate namespaces and restrict communication between pods.
+4. **Use Admission Controllers**: Implement admission controllers to enforce security policies.
+EOF
+  
+  # Finalize report
+  echo -e "Report generated: ${report_file}"
+}
+
+# Main function
+main() {
+  parse_args "$@"
+  
+  case "$COMMAND" in
+    list-sccs)
+      check_prereqs
+      list_sccs
+      ;;
+    check-scc)
+      check_prereqs
+      check_scc "$SCC_NAME1"
+      ;;
+    find-subjects)
+      check_prereqs
+      find_subjects "$SCC_NAME1"
+      ;;
+    high-risk)
+      check_prereqs
+      high_risk
+      ;;
+    unused)
+      check_prereqs
+      unused
+      ;;
+    compare)
+      check_prereqs
+      compare "$SCC_NAME1" "$SCC_NAME2"
+      ;;
+    report)
+      check_prereqs
+      generate_report
+      ;;
+    sensitive-caps)
+      check_prereqs
+      sensitive_caps
+      ;;
+    sensitive-volumes)
+      check_prereqs
+      sensitive_volumes
+      ;;
+    sensitive-seccomp)
+      check_prereqs
+      sensitive_seccomp
+      ;;
+    sensitive-selinux)
+      check_prereqs
+      sensitive_selinux
+      ;;
+    container-security-report)
+      check_prereqs
+      container_security_report
+      ;;
+    help)
+      show_usage
+      ;;
+    *)
+      echo -e "${RED}Error: Unknown command: $COMMAND${NC}"
+      show_usage
+      exit 1
+      ;;
+  esac
+}
+
+# Execute main function with all arguments
+main "$@"
