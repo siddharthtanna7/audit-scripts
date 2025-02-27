@@ -142,11 +142,6 @@ list_sccs() {
     # Format using the format_output function
     format_output "$full_table"
   fi
-}$'\n'"${scc_data}"
-    
-    # Format using the format_output function
-    format_output "$full_table"
-  fi
 }
 
 # Function to check details of a specific SCC
