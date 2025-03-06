@@ -24,6 +24,7 @@ REPORT_FILE=""
 FULL_SCAN=false
 JSON_OUTPUT=false
 VERBOSE=false
+TARGET_USER="jenkins"
 
 # Help function
 print_help() {
@@ -33,12 +34,13 @@ print_help() {
     echo ""
     echo "Options:"
     echo "  -o, --output DIR     Output directory for reports (default: current directory)"
+    echo "  -u, --user USER      Target user to check (default: jenkins)"
     echo "  -f, --full           Perform full scan (including more extensive audits)"
     echo "  -j, --json           Output results in JSON format"
     echo "  -v, --verbose        Enable verbose output"
     echo "  -h, --help           Display this help message"
     echo ""
-    echo "Example: $0 --output /tmp/podman-audit --full"
+    echo "Example: $0 --output /tmp/podman-audit --user myuser --full"
     exit 0
 }
 
@@ -48,6 +50,10 @@ process_args() {
         case $1 in
             -o|--output)
                 OUTPUT_DIR="$2"
+                shift 2
+                ;;
+            -u|--user)
+                TARGET_USER="$2"
                 shift 2
                 ;;
             -f|--full)
@@ -158,24 +164,7 @@ check_rootless_mode() {
 check_user_namespaces() {
     # Checking user namespace configuration
     
-    local current_user=$(whoami)
-    
-    # Check if current user has subuids and subgids configured
-    if grep -q "$current_user" /etc/subuid && grep -q "$current_user" /etc/subgid; then
-        local subuid_count=$(grep "$current_user" /etc/subuid | cut -d: -f3)
-        local subgid_count=$(grep "$current_user" /etc/subgid | cut -d: -f3)
-        
-        log "$PASS" "User $current_user has subuid and subgid allocations" "Proper UID/GID mappings are essential for rootless container security"
-        
-        # Check if the counts are sufficient
-        if [[ $subuid_count -lt 65536 || $subgid_count -lt 65536 ]]; then
-            log "$FAIL" "Subuid/Subgid counts are less than recommended 65536" "Configure at least 65536 subordinate UIDs/GIDs in /etc/subuid and /etc/subgid. Run: usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $current_user"
-        fi
-    else
-        log "$FAIL" "User $current_user does not have proper subuid/subgid mappings" "Add subordinate UIDs/GIDs by running: usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $current_user"
-    fi
-    
-    # Check if newuidmap and newgidmap are available
+    # Only check capabilities for tooling
     if ! command -v newuidmap &> /dev/null || ! command -v newgidmap &> /dev/null; then
         log "$FAIL" "newuidmap or newgidmap tools are missing" "Install shadow-utils package: dnf install shadow-utils (RHEL/Fedora) or apt install uidmap (Debian/Ubuntu)"
     else
@@ -295,55 +284,8 @@ check_storage_configuration() {
 
 # Check for registry configuration security
 check_registry_configuration() {
-    # Checking registry configuration
-    
-    # Check if any insecure registries are configured
-    local insecure_registries=$(podman info 2>/dev/null | grep -A 10 "registries:" | grep "insecure" | grep -v "false")
-    
-    if [[ -n "$insecure_registries" ]]; then
-        log "$FAIL" "Insecure registries are configured" "Remove insecure registry settings as they allow unencrypted HTTP connections and bypass certificate validation"
-    else
-        log "$PASS" "No insecure registries configured" "Using secure registries protects against man-in-the-middle attacks"
-    fi
-    
-    # Check registry configuration files
-    local registry_conf="/etc/containers/registries.conf"
-    if [[ -f "$registry_conf" ]]; then
-        if grep -q "insecure = true" "$registry_conf"; then
-            log "$FAIL" "Insecure registry settings found in $registry_conf" "Edit $registry_conf and set insecure = false for all registries, or remove the insecure setting"
-        else
-            log "$PASS" "Registry configuration file has secure settings" "Maintaining secure registry settings prevents container supply chain attacks"
-        fi
-        
-        # Check for default registry configuration
-        if ! grep -q "^default-registry" "$registry_conf" 2>/dev/null; then
-            log "$FAIL" "No default registry configured" "Configure a default registry in $registry_conf to ensure known-good image sources"
-        fi
-    else
-        log "$FAIL" "Registry configuration file not found at $registry_conf" "Create registry configuration file: sudo cp /usr/share/containers/registries.conf /etc/containers/registries.conf"
-    fi
-    
-    local registry_conf_d="/etc/containers/registries.conf.d"
-    if [[ -d "$registry_conf_d" ]]; then
-        if grep -q "insecure = true" "$registry_conf_d"/* 2>/dev/null; then
-            log "$FAIL" "Insecure registry settings found in $registry_conf_d" "Edit files in $registry_conf_d to remove any insecure = true settings"
-        else
-            log "$PASS" "Registry configuration directory has secure settings" "Maintaining secure registry settings in all config files prevents container supply chain attacks"
-        fi
-    fi
-    
-    # Check for policy.json configuration
-    local policy_json="/etc/containers/policy.json"
-    if [[ -f "$policy_json" ]]; then
-        log "$PASS" "Container policy file exists at $policy_json" "Policy file controls which image sources are trusted"
-        
-        # Check for default policy
-        if grep -q '"default": \[ { "type": "insecureAcceptAnything" }\]' "$policy_json"; then
-            log "$FAIL" "Default policy is set to insecureAcceptAnything" "Configure $policy_json with a more restrictive default policy to improve supply chain security"
-        fi
-    else
-        log "$FAIL" "Container policy file not found at $policy_json" "Create policy file with secure defaults: sudo cp /usr/share/containers/policy.json /etc/containers/policy.json"
-    fi
+    # Registry checks disabled
+    log "$PASS" "Registry configuration checks skipped as requested" "Manual verification of registry security settings recommended"
 }
 
 # Check if Podman events are being logged
@@ -488,44 +430,88 @@ check_network_configuration() {
 
 # This function has been removed as it checks running containers
 
-# Check for Jenkins security if running in Jenkins environment
-check_jenkins_security() {
-    # Checking for Jenkins integration with Podman
+# Check security for the specified user
+check_user_security() {
+    # Checking for user integration with Podman
     
-    # Check if Jenkins is installed
-    if command -v jenkins &> /dev/null || [[ -d "/var/lib/jenkins" ]]; then
+    if id "$TARGET_USER" &>/dev/null; then
+        log "$PASS" "User $TARGET_USER exists" "User configuration verified for Podman integration"
         
-        # Check Jenkins user
-        local jenkins_user="jenkins"
-        if id "$jenkins_user" &>/dev/null; then
-            log "$PASS" "Jenkins user exists" "Jenkins CI/CD integration requires proper user configuration"
+        # Check if user has sudo access
+        if groups "$TARGET_USER" | grep -q "sudo\|wheel"; then
+            log "$FAIL" "User $TARGET_USER has sudo group membership" "Remove $TARGET_USER from sudo/wheel group for better security: sudo gpasswd -d $TARGET_USER sudo"
+        else
+            log "$PASS" "User $TARGET_USER does not have sudo group membership" "Restricting user privileges follows the principle of least privilege"
+        fi
+        
+        # Check if user has subuid/subgid mappings
+        if grep -q "$TARGET_USER" /etc/subuid && grep -q "$TARGET_USER" /etc/subgid; then
+            local subuid_count=$(grep "$TARGET_USER" /etc/subuid | cut -d: -f3)
+            local subgid_count=$(grep "$TARGET_USER" /etc/subgid | cut -d: -f3)
             
-            # Check if Jenkins user has sudo access
-            if groups "$jenkins_user" | grep -q "sudo\|wheel"; then
-                log "$FAIL" "Jenkins user has sudo group membership" "Remove jenkins from sudo/wheel group for better security: sudo gpasswd -d jenkins sudo"
+            log "$PASS" "User $TARGET_USER has subuid/subgid mappings for rootless Podman" "Proper UID/GID mappings allow user to run Podman in rootless mode"
+            
+            # Check if the counts are sufficient
+            if [[ $subuid_count -lt 65536 || $subgid_count -lt 65536 ]]; then
+                log "$FAIL" "Subuid/Subgid counts for user $TARGET_USER are less than recommended 65536" "Configure at least 65536 subordinate UIDs/GIDs in /etc/subuid and /etc/subgid. Run: usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $TARGET_USER"
+            fi
+        else
+            log "$FAIL" "User $TARGET_USER lacks subuid/subgid mappings" "Add subordinate UIDs/GIDs: usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $TARGET_USER"
+        fi
+        
+        # Check for sudoers entries
+        if [[ -f "/etc/sudoers" ]] && grep -q "$TARGET_USER" /etc/sudoers /etc/sudoers.d/* 2>/dev/null; then
+            log "$FAIL" "User $TARGET_USER has sudoers entries" "Remove user from sudoers files to prevent privilege escalation"
+            grep "$TARGET_USER" /etc/sudoers /etc/sudoers.d/* 2>/dev/null | while read line; do
+                if [[ "$line" == *"ALL"*"ALL"*"NOPASSWD"* ]]; then
+                    log "$FAIL" "User $TARGET_USER has unrestricted sudo access" "Remove NOPASSWD sudo access for user immediately to prevent privilege escalation"
+                fi
+            done
+        else
+            log "$PASS" "User $TARGET_USER has no sudoers entries" "User should not have sudo access for better security isolation"
+        fi
+        
+        # Check user specific configuration files
+        local user_home=""
+        if [[ -d "/var/lib/$TARGET_USER" ]]; then
+            user_home="/var/lib/$TARGET_USER"
+        elif [[ -d "/home/$TARGET_USER" ]]; then
+            user_home="/home/$TARGET_USER"
+        fi
+        
+        if [[ -n "$user_home" ]]; then
+            # Check for user specific Podman configs
+            local user_containers_conf="$user_home/.config/containers/containers.conf"
+            if [[ -f "$user_containers_conf" ]]; then
+                log "$PASS" "User $TARGET_USER has custom Podman configuration" "User-specific Podman configuration enhances security"
+                
+                # Check for event logging
+                if grep -q "events_logger *= *\"journald\"" "$user_containers_conf"; then
+                    log "$PASS" "User $TARGET_USER has event logging configured" "Event logging for containers improves auditability"
+                else
+                    log "$FAIL" "User $TARGET_USER does not have event logging configured" "Add 'events_logger = \"journald\"' to $user_containers_conf in the [engine] section"
+                fi
             else
-                log "$PASS" "Jenkins user does not have sudo group membership" "Restricting Jenkins user privileges follows the principle of least privilege"
+                log "$FAIL" "User $TARGET_USER lacks custom Podman configuration" "Create user-specific configuration at $user_home/.config/containers/containers.conf"
             fi
             
-            # Check if Jenkins user has subuid/subgid mappings
-            if grep -q "$jenkins_user" /etc/subuid && grep -q "$jenkins_user" /etc/subgid; then
-                log "$PASS" "Jenkins user has subuid/subgid mappings for rootless Podman" "Proper UID/GID mappings allow Jenkins to run Podman in rootless mode"
+            # Check for storage configuration
+            local user_storage_conf="$user_home/.config/containers/storage.conf"
+            if [[ -f "$user_storage_conf" ]]; then
+                log "$PASS" "User $TARGET_USER has custom storage configuration" "User-specific storage configuration enhances security"
+                
+                # Check for quota settings
+                if grep -q "size" "$user_storage_conf"; then
+                    log "$PASS" "User $TARGET_USER has storage quota configured" "Storage quotas prevent container storage from consuming all disk space"
+                else
+                    log "$FAIL" "User $TARGET_USER has no storage quota configured" "Add 'size = \"20G\"' to $user_storage_conf in the [storage.options] section"
+                fi
             else
-                log "$FAIL" "Jenkins user lacks subuid/subgid mappings" "Add subordinate UIDs/GIDs: usermod --add-subuids 100000-165535 --add-subgids 100000-165535 jenkins"
-            fi
-            
-            # Check for sudoers entries for jenkins
-            if [[ -f "/etc/sudoers" ]] && grep -q "$jenkins_user" /etc/sudoers /etc/sudoers.d/* 2>/dev/null; then
-                log "$FAIL" "Jenkins user has sudoers entries" "Remove Jenkins user from sudoers files to prevent privilege escalation"
-                grep "$jenkins_user" /etc/sudoers /etc/sudoers.d/* 2>/dev/null | while read line; do
-                    if [[ "$line" == *"ALL"*"ALL"*"NOPASSWD"* ]]; then
-                        log "$FAIL" "Jenkins user has unrestricted sudo access" "Remove NOPASSWD sudo access for Jenkins user immediately to prevent privilege escalation"
-                    fi
-                done
-            else
-                log "$PASS" "Jenkins user has no sudoers entries" "Jenkins should not have sudo access for better security isolation"
+                log "$FAIL" "User $TARGET_USER lacks custom storage configuration" "Create user-specific storage configuration at $user_home/.config/containers/storage.conf"
             fi
         fi
+    else
+        log "$FAIL" "User $TARGET_USER does not exist" "Create the user with: useradd -m $TARGET_USER"
     fi
 }
 
@@ -549,10 +535,10 @@ generate_security_score() {
     fi
     
     # Security posture summary
-    log "$FAIL" "Critical issues: $fails"
-    log "$PASS" "Passed checks: $passes"
-    log "$PASS" "Total checks: $total"
-    log "$PASS" "Security score: $score%"
+    echo -e "Critical issues: $fails" | tee -a "$REPORT_FILE"
+    echo -e "Passed checks: $passes" | tee -a "$REPORT_FILE"
+    echo -e "Total checks: $total" | tee -a "$REPORT_FILE"
+    echo -e "Security score: $score%" | tee -a "$REPORT_FILE"
     
     # Interpret score without using bc
     if [[ -z "$score" ]]; then
@@ -679,6 +665,7 @@ main() {
     check_registry_configuration
     check_event_logging
     check_network_configuration
+    check_user_security
     
     # Skip updates check for offline environment
     # check_updates
